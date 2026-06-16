@@ -1,16 +1,40 @@
 # SourceCar_HAL 当前应用逻辑记录
 
-本文记录当前这一版工程里“自己写的应用层/BSP/公共模块”的核心逻辑，方便以后回看和继续扩展。STM32Cube/HAL 生成代码不作为重点，只说明和应用逻辑有关的接口。
+本文记录当前工程里手写的应用层、BSP、公共模块和设备驱动逻辑。STM32Cube/HAL
+生成代码不作为重点，只说明它和当前应用行为的连接点。
 
-## 1. 总体结构
+## 1. 当前固件目标
+
+当前默认配置是 CS1238 ADC 调试/采样版本，而不是车控串口路由版本。
+
+配置入口在 `App/Inc/app_config.h`：
+
+```c
+#define APP_ENABLE_CS1238          1
+#define APP_ENABLE_LED_HEARTBEAT   1
+#define APP_ENABLE_SERIAL_BRIDGE   0
+#define APP_ENABLE_ESP8266         0
+#define APP_ENABLE_UART2           0
+#define APP_ENABLE_UART3           0
+```
+
+也就是说：
+
+- USART1 保持启用，用作调试输出。
+- LED 心跳保持启用，用来观察主循环是否正常运行。
+- CS1238 采样任务启用。
+- 3-UART router、ESP8266、USART2、USART3 当前默认不启动，避免影响 ADC 调试时序。
+- TLV493D 调试任务仍保留在代码中，但当前应用层不调用。
+
+## 2. 总体结构
 
 工程按层拆分：
 
 - `Core/`：STM32Cube/HAL 启动、外设句柄、中断入口等底层工程代码。
-- `App/`：应用层主逻辑，目前核心是 3-UART router。
-- `BSP/`：板级外设封装，比如 LED、UART、ESP8266 使能脚。
+- `App/`：应用层主逻辑，负责按 `app_config.h` 启停功能模块。
+- `BSP/`：板级外设封装，比如时钟、GPIO、UART、LED、ESP8266 使能脚、I2C。
 - `Common/`：通用工具，目前主要是环形缓冲区。
-- `Device/`：外设驱动，比如 TLV493D 驱动代码，目前应用层没有启用。
+- `Device/`：外设驱动，目前包含 CS1238 和 TLV493D-A1B6。
 - `Protocol/`：协议相关占位/扩展模块。
 
 主入口在 `Core/Src/main.c`：
@@ -25,199 +49,150 @@ while (1)
 }
 ```
 
-也就是说，`main.c` 只负责启动 BSP 和 App，真正业务逻辑集中在 `App/`。
+`main.c` 只负责启动 BSP 和 App，真正业务逻辑集中在 `App/`。
 
-## 2. 启动流程
+## 3. 启动流程
 
-`BSP_System_Init()` 位于 `BSP/Src/bsp_system.c`，负责：
+`BSP_System_Init()` 位于 `BSP/Src/bsp_system.c`，当前负责：
 
 - `HAL_Init()`
 - 系统时钟初始化
 - GPIO 初始化
 - USART1 初始化
-- USART2 初始化
+- 如果 `APP_ENABLE_UART2` 为 1，再初始化 USART2
 
-`App_Init()` 位于 `App/Src/app_main.c`，负责：
+`App_Init()` 位于 `App/Src/app_main.c`，当前按宏开关选择性初始化：
 
-- 初始化 LED 抽象
-- 初始化 ESP8266 使能脚 PB12
-- 初始化 USART3，用作 ESP8266 UART
-- 保持 TLV493D 禁用
-- 初始化 3-UART router
+- 如果 `APP_ENABLE_LED_HEARTBEAT` 为 1，初始化 LED 抽象。
+- 如果 `APP_ENABLE_ESP8266` 为 1，初始化 ESP8266 使能脚。
+- 如果 `APP_ENABLE_UART3` 为 1，初始化 USART3。
+- 如果 `APP_ENABLE_SERIAL_BRIDGE` 为 1，初始化 3-UART router。
+- 如果 `APP_ENABLE_CS1238` 为 1，初始化 CS1238 采样任务。
 
-当前 `App_Init()` 里的关键顺序是：
+`App_Loop()` 同样按宏开关执行：
 
-```c
-BSP_LED_Init();
-BSP_ESP8266_Init();
-BSP_UART3_Init(115200U);
-AppSerialBridge_Init();
-```
+- 运行串口路由任务 `AppSerialBridge_Process()`，如果该功能启用。
+- 运行 CS1238 周期任务 `App_CS1238_Task()`，如果该功能启用。
+- 使用 `HAL_GetTick()` 做非阻塞 LED 心跳。
 
-## 3. 串口硬件分配
+## 4. 当前 CS1238 硬件分配
 
-当前串口分配：
+CS1238 句柄定义在 `Device/Src/dev_cs1238.c`：
 
 ```text
-USART1: PC / CH340
-PA9  = USART1_TX
-PA10 = USART1_RX
-115200 8N1
+hcs1238_1:
+  SCLK = PB0
+  DOUT = PB1
 
-USART2: car controller UART
-PA2 = USART2_TX
-PA3 = USART2_RX
-115200 8N1
-
-USART3: ESP8266 UART
-PB10 = USART3_TX -> ESP8266_RX
-PB11 = USART3_RX <- ESP8266_TX
-115200 8N1
-
-ESP8266 enable:
-PB12 -> ESP8266_EN / CH_PD
-PB12 LOW  = ESP8266 enabled
-PB12 HIGH = ESP8266 disabled
+hcs1238_2:
+  SCLK = PA0
+  DOUT = PA6
 ```
 
-注意：PB10 现在是 USART3_TX，不再作为 GPIO 控制 ESP8266。
+驱动初始化时会根据句柄自动打开对应 GPIO 端口时钟，把 SCLK 配置为推挽输出，
+把 DOUT 配置为上拉输入。写配置寄存器时，DOUT 会临时切到开漏输出，写完后再切回输入。
 
-## 4. ESP8266 使能控制
-
-ESP8266 使能脚封装在：
-
-- `BSP/Inc/bsp_esp8266.h`
-- `BSP/Src/bsp_esp8266.c`
-
-当前电平定义：
-
-```c
-#define ESP8266_ENABLE_LEVEL  GPIO_PIN_RESET
-#define ESP8266_DISABLE_LEVEL GPIO_PIN_SET
-```
-
-含义：
-
-```text
-BSP_ESP8266_Enable()  -> PB12 LOW  -> ESP8266 enabled
-BSP_ESP8266_Disable() -> PB12 HIGH -> ESP8266 disabled
-```
-
-`BSP_ESP8266_Init()` 会把 PB12 配置为推挽输出，并默认设置为关闭状态：
-
-```text
-PB12 HIGH, ESP8266 disabled
-```
-
-## 5. 3-UART Router
+## 5. CS1238 底层驱动
 
 核心文件：
+
+- `Device/Inc/dev_cs1238.h`
+- `Device/Src/dev_cs1238.c`
+
+驱动提供的主要接口：
+
+```c
+void CS1238_Init(CS1238_Handle *h);
+void CS1238_InitAll(void);
+uint8_t CS1238_IsDataReady(CS1238_Handle *h);
+HAL_StatusTypeDef CS1238_ReadRaw(CS1238_Handle *h, int32_t *raw, uint32_t timeout_ms);
+HAL_StatusTypeDef CS1238_WriteConfig(CS1238_Handle *h, uint8_t cfg);
+uint8_t CS1238_MakeConfig(uint8_t refo_off, uint8_t speed, uint8_t pga, uint8_t ch);
+uint8_t CS1238_PgaGainFromSel(uint8_t pga);
+float CS1238_RawToVoltage(int32_t raw, float vref, uint8_t pga);
+```
+
+配置枚举已经在头文件中明确列出：
+
+```c
+CS1238_SPEED_10HZ
+CS1238_SPEED_40HZ
+CS1238_SPEED_640HZ
+CS1238_SPEED_1280HZ
+
+CS1238_PGA_SEL_1
+CS1238_PGA_SEL_2
+CS1238_PGA_SEL_64
+CS1238_PGA_SEL_128
+
+CS1238_CH_A
+CS1238_CH_B
+CS1238_CH_TEMPERATURE
+CS1238_CH_SHORT
+```
+
+`CS1238_ReadRaw()` 读取 24 位原始转换值，并做符号扩展。`CS1238_WriteConfig()`
+按 CS1238 的时序先等待 DRDY/DOUT 拉低，再读掉当前转换数据，之后发送写配置命令
+`0x65` 和 8 位配置寄存器值。
+
+## 6. CS1238 应用层采样任务
+
+核心文件：
+
+- `App/Inc/app_cs1238_task.h`
+- `App/Src/app_cs1238_task.c`
+
+当前应用层常量：
+
+```c
+#define APP_CS1238_PRINT_INTERVAL_MS        1000U
+#define APP_CS1238_PRINT_SAMPLE_WINDOW_MS   1200U
+#define APP_CS1238_ENABLE_ADC1              1
+#define APP_CS1238_ENABLE_ADC2              1
+#define APP_CS1238_POLL_ADC2                0
+#define APP_CS1238_PRINT_ADC2               0
+#define APP_CS1238_REFO_OFF                 0U
+#define APP_CS1238_SPEED_SEL                CS1238_SPEED_10HZ
+#define APP_CS1238_PGA_SEL                  CS1238_PGA_SEL_2
+#define APP_CS1238_CHANNEL_COUNT            2U
+#define APP_CS1238_ACTIVE_CHANNEL_COUNT     2U
+```
+
+当前行为：
+
+- ADC1 和 ADC2 都会创建设备对象。
+- ADC1 会被轮询和打印。
+- ADC2 会初始化配置，但 `APP_CS1238_POLL_ADC2` 和 `APP_CS1238_PRINT_ADC2` 当前为 0，
+  所以不会进入周期轮询和打印。
+- 每个 ADC 设备内部维护 A/B 两个数据流。
+- 采到一个通道后，任务切到下一个通道，并丢弃若干次转换，减少切换通道后的旧数据或过渡数据。
+- 打印时只统计最近约 1200 ms 内的样本，避免长时间窗口掩盖当前状态。
+
+当前 USART1 调试输出格式较精简：
+
+```text
+[CS1238] init speed=10Hz pga=2 cfgA=0x04 cfgB=0x05 ADC1=OK ADC2=OK
+[CS1238] t=12345ms
+ADC1-A raw_avg=...
+ADC1-B raw_avg=...
+```
+
+## 7. 串口和 ESP8266 模块当前状态
+
+项目仍保留 3-UART router：
 
 - `App/Src/app_serial_bridge.c`
 - `App/Inc/app_serial_bridge.h`
 
-虽然文件名仍叫 `serial_bridge`，当前实际功能已经是 3-UART router。
-
-路由模式枚举：
+它支持三种模式：
 
 ```c
-typedef enum
-{
-    APP_ROUTE_PC_CAR = 0,
-    APP_ROUTE_WIFI_CAR,
-    APP_ROUTE_PC_ESP_DEBUG
-} AppSerialRouteMode;
-```
-
-默认模式：
-
-```text
 APP_ROUTE_PC_CAR
+APP_ROUTE_WIFI_CAR
+APP_ROUTE_PC_ESP_DEBUG
 ```
 
-即开机默认：
-
-```text
-PC / USART1 <-> STM32 <-> USART2 / car controller
-ESP8266 disabled
-```
-
-### APP_ROUTE_PC_CAR
-
-PC 直接控制车控板：
-
-```text
-USART1_RX -> USART2_TX
-USART2_RX -> USART1_TX
-USART3_RX -> drop
-```
-
-这是默认模式。
-
-### APP_ROUTE_WIFI_CAR
-
-ESP8266 网络侧控制车控板：
-
-```text
-USART3_RX -> USART2_TX
-USART2_RX -> USART3_TX
-USART1_RX -> 只解析本地 # 命令，不转发普通 PC 数据到车控
-```
-
-当前启用了监控镜像：
-
-```c
-#define APP_SERIAL_MIRROR_CAR_TO_PC_IN_WIFI_MODE 1
-```
-
-所以在 `WIFI_CAR` 模式下，车控返回也会复制一份到 PC：
-
-```text
-USART2_RX -> USART3_TX
-USART2_RX -> USART1_TX
-```
-
-这样 PC 能看到车控回复，但不能同时控制车，避免 USART1 和 USART3 同时写 USART2 导致命令交错。
-
-如果执行 `#wifi_car` 时 ESP8266 原本处于关闭状态，固件会先拉低 PB12 启用 ESP8266，并短时间丢弃 USART3 的启动输出，避免 ESP8266 开机乱码、`ready`、`WIFI...` 等文本直接进入 USART2 车控通道。
-
-当前 `WIFI_CAR` 模式支持 ESP8266 普通 AT `+IPD` 输入解析。比如 USART3 收到：
-
-```text
-+IPD,27:$spd:1000,-1000,1000,-1000#
-```
-
-STM32 只会把 payload 部分转发给 USART2：
-
-```text
-$spd:1000,-1000,1000,-1000#
-```
-
-同时兼容多连接格式：
-
-```text
-+IPD,0,27:$spd:1000,-1000,1000,-1000#
-```
-
-`WIFI_CAR` 模式不会自动给网络侧数据追加 `\r\n`，因为车控通道必须尽量保持原始字节流；如果车控协议需要换行，网络端或 ESP8266 侧应发送完整的协议字节。
-
-### APP_ROUTE_PC_ESP_DEBUG
-
-PC 调试 ESP8266 AT 指令：
-
-```text
-USART1_RX -> USART3_TX
-USART3_RX -> USART1_TX
-USART2_RX -> drop
-```
-
-这个模式用于配置 ESP8266，不是正常控车模式。
-
-## 6. PC 本地命令
-
-本地命令从 USART1 / PC 终端输入，必须以 `#` 开头。
-
-支持命令：
+也保留了本地 `#` 命令：
 
 ```text
 #pc_car
@@ -228,177 +203,67 @@ USART2_RX -> drop
 #status
 ```
 
-命令行为：
-
-```text
-#pc_car:
-  切换到 APP_ROUTE_PC_CAR
-
-#wifi_car:
-  如果 ESP8266 当前关闭，先启用 ESP8266
-  切换到 APP_ROUTE_WIFI_CAR
-
-#esp_debug:
-  切换到 APP_ROUTE_PC_ESP_DEBUG
-
-#esp_on:
-  PB12 LOW, 启用 ESP8266
-
-#esp_off:
-  PB12 HIGH, 关闭 ESP8266
-  如果当前在 WIFI_CAR 或 PC_ESP_DEBUG，则自动切回 PC_CAR
-
-#status:
-  打印当前路由模式和 ESP8266 启用状态
-```
-
-所有 `#` 命令都会被 STM32 本地消费：
-
-```text
-不会转发到 USART2
-不会转发到 USART3
-```
-
-普通数据不以 `#` 开头时，按当前路由模式转发。
-
-## 7. ESP Debug 模式的换行处理
-
-ESP8266 AT 指令通常需要 `\r\n` 结尾。
-
-当前代码在 `APP_ROUTE_PC_ESP_DEBUG` 模式下做了换行规范化：
-
-```text
-PC 发普通字符 -> 原样转发给 USART3
-PC 发 \r      -> 转成 \r\n 发给 USART3
-PC 发 \n      -> 转成 \r\n 发给 USART3
-PC 发 \r\n    -> 只转成一个 \r\n
-```
-
-因此在 `#esp_debug` 模式下，从 PC 输入 `AT` 并按回车，STM32 会给 ESP8266 发送：
-
-```text
-AT\r\n
-```
-
-ESP8266 返回的 `OK` 会通过 USART3_RX 回到 STM32，再转发到 USART1_TX，最终显示在 PC 终端。
-
-## 8. UART 中断和缓冲区
-
-`app_serial_bridge.c` 拥有唯一的 `HAL_UART_RxCpltCallback()`。
-
-不要再创建第二个 `HAL_UART_RxCpltCallback()`。
-
-当前接收方式：
+但在当前 CS1238 bring-up 配置下：
 
 ```c
-HAL_UART_Receive_IT(..., 1);
+#define APP_ENABLE_SERIAL_BRIDGE 0
+#define APP_ENABLE_ESP8266       0
+#define APP_ENABLE_UART2         0
+#define APP_ENABLE_UART3         0
 ```
 
-三个 UART 都是一字节中断接收：
+所以这些功能不会在开机时启动。需要回到车控/ESP8266 联调时，再从
+`App/Inc/app_config.h` 打开对应宏。
 
-```text
-USART1 -> uart1_rx_buffer
-USART2 -> uart2_rx_buffer
-USART3 -> uart3_rx_buffer
-```
+## 8. TLV493D 当前状态
 
-发送也使用环形缓冲区：
-
-```text
-uart1_tx_buffer
-uart2_tx_buffer
-uart3_tx_buffer
-```
-
-中断里只把字节放进 RX buffer，并立即重启下一字节接收。真正的路由转发在 `AppSerialBridge_Process()` 中执行。
-
-环形缓冲区实现在：
-
-- `Common/Inc/ring_buffer.h`
-- `Common/Src/ring_buffer.c`
-
-## 9. TLV493D 当前状态
-
-TLV493D 驱动代码仍然存在：
+TLV493D-A1B6 驱动和调试代码仍然存在：
 
 - `Device/Src/dev_tlv493d_a1b6.c`
+- `Device/Inc/dev_tlv493d_a1b6.h`
 - `App/Src/app_tlv493d_a1b6_debug.c`
+- `App/Inc/app_tlv493d_a1b6_debug.h`
 
-但当前应用层没有调用：
+当前 `App_Init()` 不调用：
 
 ```c
 App_TLV493D_A1B6_DebugRunOnce();
+```
+
+当前 `App_Loop()` 不调用：
+
+```c
 App_TLV493D_A1B6_DebugLoopTick();
 ```
 
-也就是说 TLV493D 当前保持禁用，不会周期性占用 I2C，也不会往 USART1 打印调试信息。
+因此 TLV493D 当前保持禁用，不会周期性占用 I2C，也不会往 USART1 打印调试信息。
 
-## 10. 当前版本使用流程
+## 9. 构建方式
 
-开机默认：
+工程使用 CMake preset：
 
-```text
-PB12 HIGH
-ESP8266 disabled
-mode = PC_CAR
-PC USART1 <-> car USART2
+```powershell
+cmake --preset Debug
+cmake --build --preset Debug
 ```
 
-PC 控车：
+构建输出位于：
 
 ```text
-默认即可，或输入 #pc_car
+build/Debug/
 ```
 
-PC 配置 ESP8266：
+常见输出包括：
 
 ```text
-#esp_debug
-#esp_on
-AT
+SourceCar_HAL.elf
+SourceCar_HAL.hex
 ```
 
-如果 ESP8266 已经开启，也可以直接：
+## 10. 后续扩展建议
 
-```text
-#esp_debug
-AT
-```
-
-ESP8266 网络控车：
-
-```text
-#wifi_car
-```
-
-关闭 ESP8266 并回到 PC 控车：
-
-```text
-#esp_off
-```
-
-查看状态：
-
-```text
-#status
-```
-
-## 11. 后续扩展建议
-
-当前已经支持网络到车控方向的 ESP8266 AT `+IPD` 解析：
-
-```text
-+IPD,<len>:payload
-+IPD,<link_id>,<len>:payload
-```
-
-STM32 会只把 `payload` 转发给 USART2 车控。
-
-如果后续需要把车控回复真正发回网络客户端，并且 ESP8266 仍工作在普通 AT 非透明模式，那么 USART2 到 USART3 方向也需要新增发送封装，例如：
-
-```text
-AT+CIPSEND=<len>
-payload
-```
-
-如果 ESP8266 配成透明传输模式，或者 ESP8266 固件保证 UART 输入会自动发到网络，则当前 USART2 到 USART3 的原始转发可以继续保持。
+- 如果继续调 CS1238，建议先保持串口路由和 ESP8266 关闭，避免额外中断和串口任务干扰采样时序。
+- ADC1 稳定后，再把 `APP_CS1238_POLL_ADC2` 和 `APP_CS1238_PRINT_ADC2` 打开，对比双 ADC 行为。
+- 如果要恢复车控串口路由，需要同步打开 `APP_ENABLE_SERIAL_BRIDGE`、`APP_ENABLE_UART2`，
+  如果涉及 ESP8266，还需要打开 `APP_ENABLE_ESP8266` 和 `APP_ENABLE_UART3`。
+- 公开仓库目前还没有明确 `LICENSE` 文件，后续建议按实际开源意图补充许可证。

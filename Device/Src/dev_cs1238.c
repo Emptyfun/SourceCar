@@ -5,45 +5,55 @@
 #define CS1238_CFG_PGA_SHIFT 2U
 #define CS1238_CFG_CH_SHIFT 0U
 
+#define CS1238_CMD_WRITE_CONFIG 0x65U
+#define CS1238_CONFIG_WRITE_TIMEOUT_MS 500U
+#define CS1238_SCLK_DELAY_CYCLES 48U
+
 CS1238_Handle hcs1238_1 = {GPIOB, GPIO_PIN_0, GPIOB, GPIO_PIN_1};
 CS1238_Handle hcs1238_2 = {GPIOA, GPIO_PIN_0, GPIOA, GPIO_PIN_6};
 
+static void CS1238_EnableGpioClock(GPIO_TypeDef *port);
 static void CS1238_ClockLow(CS1238_Handle *h);
 static void CS1238_PulseClock(CS1238_Handle *h);
+static HAL_StatusTypeDef CS1238_WaitReady(CS1238_Handle *h, uint32_t timeout_ms);
+static uint8_t CS1238_ReadBit(CS1238_Handle *h);
+static void CS1238_WriteBit(CS1238_Handle *h, uint8_t bit);
+static void CS1238_DelayHalfSclk(void);
 static void CS1238_ConfigDataInput(CS1238_Handle *h);
 static void CS1238_ConfigDataOutput(CS1238_Handle *h);
 
-void CS1238_InitAll(void)
+void CS1238_Init(CS1238_Handle *h)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    __HAL_RCC_GPIOB_CLK_ENABLE();
+    if (h == NULL)
+    {
+        return;
+    }
 
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+    CS1238_EnableGpioClock(h->clk_port);
+    CS1238_EnableGpioClock(h->data_port);
 
+    HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_RESET);
+
+    GPIO_InitStruct.Pin = h->clk_pin;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(h->clk_port, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_0;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_0;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
+    GPIO_InitStruct.Pin = h->data_pin;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(h->data_port, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_1;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_RESET);
+}
 
-    GPIO_InitStruct.Pin = GPIO_PIN_6;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+void CS1238_InitAll(void)
+{
+    CS1238_Init(&hcs1238_1);
+    CS1238_Init(&hcs1238_2);
 }
 
 uint8_t CS1238_IsDataReady(CS1238_Handle *h)
@@ -59,7 +69,6 @@ uint8_t CS1238_IsDataReady(CS1238_Handle *h)
 
 HAL_StatusTypeDef CS1238_ReadRaw(CS1238_Handle *h, int32_t *raw, uint32_t timeout_ms)
 {
-    uint32_t start;
     uint32_t dat = 0UL;
     uint8_t i;
 
@@ -71,27 +80,22 @@ HAL_StatusTypeDef CS1238_ReadRaw(CS1238_Handle *h, int32_t *raw, uint32_t timeou
     CS1238_ConfigDataInput(h);
     CS1238_ClockLow(h);
 
-    start = HAL_GetTick();
-    while (HAL_GPIO_ReadPin(h->data_port, h->data_pin) != GPIO_PIN_RESET)
+    if (CS1238_WaitReady(h, timeout_ms) != HAL_OK)
     {
-        if ((uint32_t)(HAL_GetTick() - start) >= timeout_ms)
-        {
-            CS1238_ClockLow(h);
-            return HAL_TIMEOUT;
-        }
+        CS1238_ClockLow(h);
+        return HAL_TIMEOUT;
     }
 
     for (i = 0U; i < 24U; i++)
     {
-        HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_SET);
         dat <<= 1;
-        if (HAL_GPIO_ReadPin(h->data_port, h->data_pin) == GPIO_PIN_SET)
+        if (CS1238_ReadBit(h) != 0U)
         {
             dat |= 1UL;
         }
-        HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_RESET);
     }
 
+    /* Clocks 25/26 are status bits and clock 27 returns DRDY/DOUT high. */
     for (i = 0U; i < 3U; i++)
     {
         CS1238_PulseClock(h);
@@ -110,23 +114,61 @@ HAL_StatusTypeDef CS1238_ReadRaw(CS1238_Handle *h, int32_t *raw, uint32_t timeou
 HAL_StatusTypeDef CS1238_WriteConfig(CS1238_Handle *h, uint8_t cfg)
 {
     uint8_t i;
+    uint8_t command = CS1238_CMD_WRITE_CONFIG;
 
     if (h == NULL)
     {
         return HAL_ERROR;
     }
 
+    cfg &= 0x7FU;
+    CS1238_ConfigDataInput(h);
     CS1238_ClockLow(h);
-    CS1238_ConfigDataOutput(h);
 
-    for (i = 0U; i < 8U; i++)
+    if (CS1238_WaitReady(h, CS1238_CONFIG_WRITE_TIMEOUT_MS) != HAL_OK)
     {
-        HAL_GPIO_WritePin(h->data_port, h->data_pin,
-                          ((cfg & 0x80U) != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        CS1238_PulseClock(h);
-        cfg <<= 1;
+        CS1238_ClockLow(h);
+        return HAL_TIMEOUT;
     }
 
+    /* 1..24: drain the current ADC conversion before the config phase. */
+    for (i = 0U; i < 24U; i++)
+    {
+        (void)CS1238_ReadBit(h);
+    }
+
+    /* 25..26: read write-status flags, 27: force DRDY/DOUT high. */
+    (void)CS1238_ReadBit(h);
+    (void)CS1238_ReadBit(h);
+    CS1238_PulseClock(h);
+
+    /*
+     * 28..29 hand the bidirectional pin over to the MCU. Command bits are
+     * sent MSB first on clocks 30..36.
+     */
+    CS1238_ConfigDataOutput(h);
+    HAL_GPIO_WritePin(h->data_port, h->data_pin, GPIO_PIN_SET);
+    CS1238_PulseClock(h);
+    CS1238_PulseClock(h);
+
+    for (i = 0U; i < 7U; i++)
+    {
+        CS1238_WriteBit(h, (uint8_t)((command >> (6U - i)) & 0x01U));
+    }
+
+    /* 37: direction turnaround. For write, the chip keeps DRDY/DOUT as input. */
+    HAL_GPIO_WritePin(h->data_port, h->data_pin, GPIO_PIN_SET);
+    CS1238_PulseClock(h);
+
+    /* 38..45: config register data, MSB first. */
+    for (i = 0U; i < 8U; i++)
+    {
+        CS1238_WriteBit(h, (uint8_t)((cfg >> (7U - i)) & 0x01U));
+    }
+
+    /* 46: latch the write and let DRDY/DOUT return to chip output mode. */
+    HAL_GPIO_WritePin(h->data_port, h->data_pin, GPIO_PIN_SET);
+    CS1238_PulseClock(h);
     CS1238_ConfigDataInput(h);
     CS1238_ClockLow(h);
     return HAL_OK;
@@ -140,15 +182,37 @@ uint8_t CS1238_MakeConfig(uint8_t refo_off, uint8_t speed, uint8_t pga, uint8_t 
                      ((ch & 0x03U) << CS1238_CFG_CH_SHIFT));
 }
 
+uint8_t CS1238_PgaGainFromSel(uint8_t pga)
+{
+    switch (pga)
+    {
+    case CS1238_PGA_SEL_2:
+        return 2U;
+
+    case CS1238_PGA_SEL_64:
+        return 64U;
+
+    case CS1238_PGA_SEL_128:
+        return 128U;
+
+    case CS1238_PGA_SEL_1:
+    default:
+        return 1U;
+    }
+}
+
 float CS1238_RawToVoltage(int32_t raw, float vref, uint8_t pga)
 {
     float gain;
 
     switch (pga)
     {
-    case 0U:
     case 1U:
-        gain = (float)pga;
+        gain = 1.0f;
+        break;
+
+    case 2U:
+        gain = 2.0f;
         break;
 
     case 64U:
@@ -177,12 +241,79 @@ static void CS1238_ClockLow(CS1238_Handle *h)
     HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_RESET);
 }
 
+static void CS1238_EnableGpioClock(GPIO_TypeDef *port)
+{
+    if (port == GPIOA)
+    {
+        __HAL_RCC_GPIOA_CLK_ENABLE();
+    }
+    else if (port == GPIOB)
+    {
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+    }
+    else if (port == GPIOC)
+    {
+        __HAL_RCC_GPIOC_CLK_ENABLE();
+    }
+    else if (port == GPIOD)
+    {
+        __HAL_RCC_GPIOD_CLK_ENABLE();
+    }
+}
+
 static void CS1238_PulseClock(CS1238_Handle *h)
 {
     HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_SET);
-    __NOP();
-    __NOP();
+    CS1238_DelayHalfSclk();
     HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_RESET);
+    CS1238_DelayHalfSclk();
+}
+
+static HAL_StatusTypeDef CS1238_WaitReady(CS1238_Handle *h, uint32_t timeout_ms)
+{
+    uint32_t start = HAL_GetTick();
+
+    while (HAL_GPIO_ReadPin(h->data_port, h->data_pin) != GPIO_PIN_RESET)
+    {
+        if ((uint32_t)(HAL_GetTick() - start) >= timeout_ms)
+        {
+            return HAL_TIMEOUT;
+        }
+    }
+
+    return HAL_OK;
+}
+
+static uint8_t CS1238_ReadBit(CS1238_Handle *h)
+{
+    uint8_t bit;
+
+    HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_SET);
+    CS1238_DelayHalfSclk();
+    bit = (HAL_GPIO_ReadPin(h->data_port, h->data_pin) == GPIO_PIN_SET) ? 1U : 0U;
+    HAL_GPIO_WritePin(h->clk_port, h->clk_pin, GPIO_PIN_RESET);
+    CS1238_DelayHalfSclk();
+
+    return bit;
+}
+
+static void CS1238_WriteBit(CS1238_Handle *h, uint8_t bit)
+{
+    HAL_GPIO_WritePin(h->data_port,
+                      h->data_pin,
+                      (bit != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    CS1238_DelayHalfSclk();
+    CS1238_PulseClock(h);
+}
+
+static void CS1238_DelayHalfSclk(void)
+{
+    volatile uint32_t i;
+
+    for (i = 0U; i < CS1238_SCLK_DELAY_CYCLES; i++)
+    {
+        __NOP();
+    }
 }
 
 static void CS1238_ConfigDataInput(CS1238_Handle *h)
@@ -198,6 +329,8 @@ static void CS1238_ConfigDataInput(CS1238_Handle *h)
 static void CS1238_ConfigDataOutput(CS1238_Handle *h)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    HAL_GPIO_WritePin(h->data_port, h->data_pin, GPIO_PIN_SET);
 
     GPIO_InitStruct.Pin = h->data_pin;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;

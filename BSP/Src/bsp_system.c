@@ -7,10 +7,13 @@
  */
 #include "bsp_system.h"
 
+#include "app_config.h"
 #include "bsp_clock.h"
 #include "bsp_gpio.h"
 #include "bsp_uart1.h"
+#if APP_ENABLE_UART2
 #include "bsp_uart2.h"
+#endif
 #include "main.h"
 
 /**
@@ -27,5 +30,7 @@ void BSP_System_Init(void)
     BSP_Clock_Init();
     BSP_GPIO_Init();
     BSP_UART1_Init();
+#if APP_ENABLE_UART2
     BSP_UART2_Init(115200U);
+#endif
 }
