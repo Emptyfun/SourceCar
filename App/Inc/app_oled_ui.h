@@ -39,5 +39,17 @@ void App_OLED_SetButtonDebug(uint8_t k1_raw_level,
                              uint32_t k2_hold_ms,
                              uint8_t run_enabled,
                              const char *event_text);
+void App_OLED_SetMagnetDebug(const char *target_text,
+                             const char *signal_text,
+                             uint8_t detected,
+                             uint8_t confidence_percent);
+void App_OLED_SetCaptureDebug(const char *label_text,
+                              uint8_t active,
+                              uint32_t remaining_ms,
+                              uint32_t sample_count,
+                              int32_t adc1_a_raw,
+                              int32_t adc1_b_raw,
+                              int32_t adc2_a_raw,
+                              int32_t adc2_b_raw);
 
 #endif /* APP_OLED_UI_H */

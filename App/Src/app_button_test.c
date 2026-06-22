@@ -1,6 +1,13 @@
 #include "app_button_test.h"
 
+#include "app_config.h"
+#if APP_ENABLE_MAGNET_DETECT
+#include "app_magnet_detect.h"
+#endif
 #include "app_oled_ui.h"
+#if APP_ENABLE_RAW_CAPTURE
+#include "app_raw_capture.h"
+#endif
 #include "stm32f1xx_hal.h"
 
 #define APP_BUTTON_SCAN_INTERVAL_MS 5U
@@ -141,13 +148,25 @@ static void App_ButtonTest_HandleShortPress(uint8_t index)
 {
     if (index == 1U)
     {
+#if APP_ENABLE_RAW_CAPTURE
+        App_RawCapture_SelectNextLabel();
+        s_run_enabled = App_RawCapture_IsActive();
+        s_last_event = "K1 LABEL";
+#else
         s_run_enabled = (s_run_enabled == 0U) ? 1U : 0U;
         s_last_event = (s_run_enabled != 0U) ? "K1 RUN ON" : "K1 RUN OFF";
+#endif
     }
     else
     {
+#if APP_ENABLE_RAW_CAPTURE
+        App_RawCapture_Toggle();
+        s_run_enabled = App_RawCapture_IsActive();
+        s_last_event = (s_run_enabled != 0U) ? "K2 CAP ON" : "K2 CAP OFF";
+#else
         App_OLED_TogglePage();
         s_last_event = (App_OLED_GetPage() == APP_OLED_PAGE_KEY_TEST) ? "K2 KEY" : "K2 CS";
+#endif
     }
 }
 
@@ -158,11 +177,20 @@ static void App_ButtonTest_HandleLongPress(uint8_t index)
 
 static void App_ButtonTest_ClearCounts(const char *event_text)
 {
+#if APP_ENABLE_RAW_CAPTURE
+    if (App_RawCapture_IsActive() != 0U)
+    {
+        App_RawCapture_Toggle();
+    }
+#endif
     s_k1.press_count = 0UL;
     s_k2.press_count = 0UL;
     s_run_enabled = 0U;
     s_last_event = event_text;
     App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
+#if APP_ENABLE_MAGNET_DETECT
+    App_MagDetect_RequestRecalibration();
+#endif
 }
 
 static void App_ButtonTest_UpdateOLED(void)

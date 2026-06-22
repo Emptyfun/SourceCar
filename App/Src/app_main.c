@@ -14,8 +14,14 @@
 #if APP_ENABLE_CS1238
 #include "app_cs1238_task.h"
 #endif
+#if APP_ENABLE_MAGNET_DETECT
+#include "app_magnet_detect.h"
+#endif
 #if APP_ENABLE_OLED
 #include "app_oled_ui.h"
+#endif
+#if APP_ENABLE_RAW_CAPTURE
+#include "app_raw_capture.h"
 #endif
 #if APP_ENABLE_SERIAL_BRIDGE
 #include "app_serial_bridge.h"
@@ -69,6 +75,14 @@ void App_Init(void)
 #if APP_ENABLE_CS1238
     App_CS1238_Init();
 #endif
+
+#if APP_ENABLE_MAGNET_DETECT
+    App_MagDetect_Init();
+#endif
+
+#if APP_ENABLE_RAW_CAPTURE
+    App_RawCapture_Init();
+#endif
 }
 
 /**
@@ -95,6 +109,14 @@ void App_Loop(void)
 
 #if APP_ENABLE_BUTTON_TEST
     App_ButtonTest_Task();
+#endif
+
+#if APP_ENABLE_MAGNET_DETECT
+    App_MagDetect_Task();
+#endif
+
+#if APP_ENABLE_RAW_CAPTURE
+    App_RawCapture_Task();
 #endif
 
 #if APP_ENABLE_OLED

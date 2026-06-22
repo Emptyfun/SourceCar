@@ -13,15 +13,17 @@
 
 #define APP_CS1238_WINDOW_SIZE 31U
 #define APP_CS1238_DISCARD_COUNT 3U
-#define APP_CS1238_PRINT_INTERVAL_MS 1000U
+#define APP_CS1238_PRINT_PERIOD_MS 1000U
 #define APP_CS1238_PRINT_SAMPLE_WINDOW_MS 1200U
 #define APP_CS1238_ENABLE_ADC1 1
 #define APP_CS1238_ENABLE_ADC2 1
-#define APP_CS1238_POLL_ADC2 0
+#define APP_CS1238_POLL_ADC1 1
+#define APP_CS1238_PRINT_ADC1 1
+#define APP_CS1238_POLL_ADC2 1
 #define APP_CS1238_PRINT_ADC2 0
 #define APP_CS1238_VREF_MV 3300U
 #define APP_CS1238_REFO_OFF 0U
-#define APP_CS1238_SPEED_SEL CS1238_SPEED_10HZ
+#define APP_CS1238_SPEED_SEL CS1238_SPEED_40HZ
 #define APP_CS1238_PGA_SEL CS1238_PGA_SEL_2
 #define APP_CS1238_ADC_FULL_SCALE 8388607LL
 #define APP_CS1238_POS_SAT_LIMIT 8388591L
@@ -68,7 +70,7 @@ typedef struct
     int32_t median;
     int32_t min;
     int32_t max;
-    uint8_t count;
+    uint16_t count;
 } AppCS1238_Filtered;
 
 static AppCS1238_Device adc1;
@@ -84,6 +86,7 @@ static void App_CS1238_DeviceInit(AppCS1238_Device *dev,
                                   const char *ch_b_name,
                                   uint8_t enabled);
 static void App_CS1238_PollDevice(AppCS1238_Device *dev);
+static void App_CS1238_TryRecoverDevice(AppCS1238_Device *dev);
 static HAL_StatusTypeDef App_CS1238_SelectActiveChannel(AppCS1238_Device *dev);
 static uint8_t App_CS1238_ConfigForChannel(uint8_t channel_sel);
 static void App_CS1238_AddSample(AppCS1238_Stream *stream, int32_t raw);
@@ -93,14 +96,21 @@ static void App_CS1238_FilterRecentStream(const AppCS1238_Stream *stream,
 static void App_CS1238_PrintDevice(const AppCS1238_Device *dev);
 static void App_CS1238_PrintStream(const AppCS1238_Device *dev,
                                    const AppCS1238_Stream *stream,
-                                   uint32_t now,
-                                   uint8_t stream_index);
+                                   uint32_t now);
+static void App_CS1238_FillChannelData(const AppCS1238_Device *dev,
+                                       const AppCS1238_Stream *stream,
+                                       uint32_t now,
+                                       AppCS1238ChannelData_t *out);
+static AppCS1238ChStatus_t App_CS1238_ChannelStatus(const AppCS1238_Device *dev,
+                                                    const AppCS1238_Stream *stream);
+static AppCS1238ChStatus_t App_CS1238_StatusToChannelStatus(AppCS1238_Status status);
 static AppCS1238_Status App_CS1238_StatusFromHAL(HAL_StatusTypeDef status);
+static uint8_t App_CS1238_ReadDataLevel(const CS1238_Handle *handle);
+static const char *App_CS1238_ChStatusText(AppCS1238ChStatus_t status);
 static const char *App_CS1238_HalStatusText(HAL_StatusTypeDef status);
 static void CS1238_DebugPrintf(const char *fmt, ...);
 #if APP_ENABLE_OLED
 static void App_CS1238_UpdateOLED(void);
-static uint8_t App_CS1238_ReadDataLevel(const CS1238_Handle *handle);
 static int32_t App_CS1238_GetDisplayRaw(const AppCS1238_Device *dev);
 static OLED_CS_Status App_CS1238_ToOLEDStatus(AppCS1238_Status status);
 #endif
@@ -124,7 +134,7 @@ void App_CS1238_Init(void)
 
     last_print_tick = HAL_GetTick();
 
-    CS1238_DebugPrintf("[CS1238] init speed=10Hz pga=%u cfgA=0x%02X cfgB=0x%02X ADC1=%s ADC2=%s\r\n",
+    CS1238_DebugPrintf("[CS1238] init speed=40Hz pga=%u cfgA=0x%02X cfgB=0x%02X ADC1=%s ADC2=%s\r\n",
                        (unsigned int)CS1238_PgaGainFromSel(APP_CS1238_PGA_SEL),
                        (unsigned int)App_CS1238_ConfigForChannel(CS1238_CH_A),
                        (unsigned int)App_CS1238_ConfigForChannel(CS1238_CH_B),
@@ -140,7 +150,7 @@ void App_CS1238_Task(void)
 {
     uint32_t now = HAL_GetTick();
 
-#if APP_CS1238_ENABLE_ADC1
+#if APP_CS1238_ENABLE_ADC1 && APP_CS1238_POLL_ADC1
     App_CS1238_PollDevice(&adc1);
 #endif
 #if APP_CS1238_ENABLE_ADC2 && APP_CS1238_POLL_ADC2
@@ -151,17 +161,49 @@ void App_CS1238_Task(void)
     App_CS1238_UpdateOLED();
 #endif
 
-    if ((uint32_t)(now - last_print_tick) >= APP_CS1238_PRINT_INTERVAL_MS)
+    if ((uint32_t)(now - last_print_tick) >= APP_CS1238_PRINT_PERIOD_MS)
     {
         last_print_tick = now;
         CS1238_DebugPrintf("[CS1238] t=%lums\r\n", (unsigned long)now);
-#if APP_CS1238_ENABLE_ADC1
+#if APP_CS1238_ENABLE_ADC1 && APP_CS1238_PRINT_ADC1
         App_CS1238_PrintDevice(&adc1);
 #endif
 #if APP_CS1238_ENABLE_ADC2 && APP_CS1238_PRINT_ADC2
         App_CS1238_PrintDevice(&adc2);
 #endif
     }
+}
+
+void App_CS1238_GetSnapshot(AppCS1238Snapshot_t *out)
+{
+    uint32_t now = HAL_GetTick();
+
+    if (out == NULL)
+    {
+        return;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+#if APP_CS1238_ENABLE_ADC1
+    App_CS1238_FillChannelData(&adc1, &adc1.stream[0], now, &out->adc1_a);
+    App_CS1238_FillChannelData(&adc1, &adc1.stream[1], now, &out->adc1_b);
+    out->adc1_data_level = App_CS1238_ReadDataLevel(adc1.handle);
+#else
+    out->adc1_a.status = APP_CS1238_CH_STATUS_ERROR;
+    out->adc1_b.status = APP_CS1238_CH_STATUS_ERROR;
+    out->adc1_data_level = 1U;
+#endif
+
+#if APP_CS1238_ENABLE_ADC2
+    App_CS1238_FillChannelData(&adc2, &adc2.stream[0], now, &out->adc2_a);
+    App_CS1238_FillChannelData(&adc2, &adc2.stream[1], now, &out->adc2_b);
+    out->adc2_data_level = App_CS1238_ReadDataLevel(adc2.handle);
+#else
+    out->adc2_a.status = APP_CS1238_CH_STATUS_ERROR;
+    out->adc2_b.status = APP_CS1238_CH_STATUS_ERROR;
+    out->adc2_data_level = 1U;
+#endif
 }
 
 static void App_CS1238_DeviceInit(AppCS1238_Device *dev,
@@ -204,6 +246,7 @@ static void App_CS1238_PollDevice(AppCS1238_Device *dev)
 
     if (dev->scan_enabled == 0U)
     {
+        App_CS1238_TryRecoverDevice(dev);
         return;
     }
 
@@ -237,6 +280,31 @@ static void App_CS1238_PollDevice(AppCS1238_Device *dev)
     {
         dev->status = App_CS1238_StatusFromHAL(dev->config_status);
         dev->scan_enabled = 0U;
+    }
+}
+
+static void App_CS1238_TryRecoverDevice(AppCS1238_Device *dev)
+{
+    if ((dev == NULL) || (dev->handle == NULL))
+    {
+        return;
+    }
+
+    if (!CS1238_IsDataReady(dev->handle))
+    {
+        return;
+    }
+
+    dev->config_status = App_CS1238_SelectActiveChannel(dev);
+    if (dev->config_status == HAL_OK)
+    {
+        dev->discard = APP_CS1238_DISCARD_COUNT;
+        dev->scan_enabled = 1U;
+        dev->status = APP_CS1238_STATUS_WAIT;
+    }
+    else
+    {
+        dev->status = App_CS1238_StatusFromHAL(dev->config_status);
     }
 }
 
@@ -309,42 +377,116 @@ static void App_CS1238_FilterRecentStream(const AppCS1238_Stream *stream,
         }
     }
 
-    if (used == 0U)
+    if (used != 0U)
     {
-        out->avg = stream->latest;
+        out->avg = (int32_t)(sum / (int64_t)used);
         out->median = stream->latest;
-        out->min = stream->latest;
-        out->max = stream->latest;
-        out->count = 1U;
-        return;
+        out->count = used;
     }
-
-    out->avg = (int32_t)(sum / (int64_t)used);
-    out->median = stream->latest;
-    out->count = used;
 }
 
 static void App_CS1238_PrintDevice(const AppCS1238_Device *dev)
 {
     uint32_t now = HAL_GetTick();
 
-    App_CS1238_PrintStream(dev, &dev->stream[0], now, 0U);
+    App_CS1238_PrintStream(dev, &dev->stream[0], now);
 #if APP_CS1238_ACTIVE_CHANNEL_COUNT > 1U
-    App_CS1238_PrintStream(dev, &dev->stream[1], now, 1U);
+    App_CS1238_PrintStream(dev, &dev->stream[1], now);
 #endif
 }
 
 static void App_CS1238_PrintStream(const AppCS1238_Device *dev,
                                    const AppCS1238_Stream *stream,
-                                   uint32_t now,
-                                   uint8_t stream_index)
+                                   uint32_t now)
+{
+    AppCS1238ChannelData_t data;
+
+    App_CS1238_FillChannelData(dev, stream, now, &data);
+    CS1238_DebugPrintf("%s n=%u raw_avg=%ld raw_last=%ld status=%s\r\n",
+                       stream->name,
+                       (unsigned int)data.sample_count,
+                       (long)data.raw_avg,
+                       (long)data.raw_last,
+                       App_CS1238_ChStatusText(data.status));
+}
+
+static void App_CS1238_FillChannelData(const AppCS1238_Device *dev,
+                                       const AppCS1238_Stream *stream,
+                                       uint32_t now,
+                                       AppCS1238ChannelData_t *out)
 {
     AppCS1238_Filtered filtered;
 
-    (void)dev;
-    (void)stream_index;
+    if (out == NULL)
+    {
+        return;
+    }
+
+    memset(out, 0, sizeof(*out));
+    if ((dev == NULL) || (stream == NULL))
+    {
+        out->status = APP_CS1238_CH_STATUS_ERROR;
+        return;
+    }
+
     App_CS1238_FilterRecentStream(stream, now, &filtered);
-    CS1238_DebugPrintf("%s raw_avg=%ld\r\n", stream->name, (long)filtered.avg);
+    out->raw_avg = filtered.avg;
+    out->sample_count = filtered.count;
+    out->status = App_CS1238_ChannelStatus(dev, stream);
+    if ((out->status == APP_CS1238_CH_STATUS_OK) && (out->sample_count == 0U))
+    {
+        out->status = APP_CS1238_CH_STATUS_WAIT;
+    }
+
+    if (stream->has_latest != 0U)
+    {
+        out->raw_last = stream->latest;
+        out->last_update_tick = stream->latest_tick;
+    }
+}
+
+static AppCS1238ChStatus_t App_CS1238_ChannelStatus(const AppCS1238_Device *dev,
+                                                    const AppCS1238_Stream *stream)
+{
+    AppCS1238ChStatus_t dev_status;
+
+    if ((dev == NULL) || (stream == NULL))
+    {
+        return APP_CS1238_CH_STATUS_ERROR;
+    }
+
+    dev_status = App_CS1238_StatusToChannelStatus(dev->status);
+    if ((dev_status == APP_CS1238_CH_STATUS_TIMEOUT) ||
+        (dev_status == APP_CS1238_CH_STATUS_ERROR))
+    {
+        return dev_status;
+    }
+
+    if (stream->has_latest != 0U)
+    {
+        return APP_CS1238_CH_STATUS_OK;
+    }
+
+    return APP_CS1238_CH_STATUS_WAIT;
+}
+
+static AppCS1238ChStatus_t App_CS1238_StatusToChannelStatus(AppCS1238_Status status)
+{
+    switch (status)
+    {
+    case APP_CS1238_STATUS_OK:
+        return APP_CS1238_CH_STATUS_OK;
+
+    case APP_CS1238_STATUS_TIMEOUT:
+        return APP_CS1238_CH_STATUS_TIMEOUT;
+
+    case APP_CS1238_STATUS_ERROR:
+        return APP_CS1238_CH_STATUS_ERROR;
+
+    case APP_CS1238_STATUS_WAIT:
+    default:
+        return APP_CS1238_CH_STATUS_WAIT;
+    }
 }
 
 static AppCS1238_Status App_CS1238_StatusFromHAL(HAL_StatusTypeDef status)
@@ -361,6 +503,35 @@ static AppCS1238_Status App_CS1238_StatusFromHAL(HAL_StatusTypeDef status)
     case HAL_ERROR:
     default:
         return APP_CS1238_STATUS_ERROR;
+    }
+}
+
+static uint8_t App_CS1238_ReadDataLevel(const CS1238_Handle *handle)
+{
+    if ((handle == NULL) || (handle->data_port == NULL))
+    {
+        return 1U;
+    }
+
+    return (HAL_GPIO_ReadPin(handle->data_port, handle->data_pin) == GPIO_PIN_SET) ? 1U : 0U;
+}
+
+static const char *App_CS1238_ChStatusText(AppCS1238ChStatus_t status)
+{
+    switch (status)
+    {
+    case APP_CS1238_CH_STATUS_OK:
+        return "OK";
+
+    case APP_CS1238_CH_STATUS_TIMEOUT:
+        return "TIMEOUT";
+
+    case APP_CS1238_CH_STATUS_ERROR:
+        return "ERROR";
+
+    case APP_CS1238_CH_STATUS_WAIT:
+    default:
+        return "WAIT";
     }
 }
 
@@ -400,16 +571,6 @@ static void App_CS1238_UpdateOLED(void)
 #endif
 
     App_OLED_SetCS1238Debug(data1, data2, status1, status2, raw1, raw2);
-}
-
-static uint8_t App_CS1238_ReadDataLevel(const CS1238_Handle *handle)
-{
-    if ((handle == NULL) || (handle->data_port == NULL))
-    {
-        return 1U;
-    }
-
-    return (HAL_GPIO_ReadPin(handle->data_port, handle->data_pin) == GPIO_PIN_SET) ? 1U : 0U;
 }
 
 static int32_t App_CS1238_GetDisplayRaw(const AppCS1238_Device *dev)
@@ -463,6 +624,7 @@ static OLED_CS_Status App_CS1238_ToOLEDStatus(AppCS1238_Status status)
 
 static void CS1238_DebugPrintf(const char *fmt, ...)
 {
+#if APP_ENABLE_CS1238_DEBUG_PRINT
     char buf[192];
     va_list args;
     int len;
@@ -482,4 +644,7 @@ static void CS1238_DebugPrintf(const char *fmt, ...)
     }
 
     (void)HAL_UART_Transmit(&huart1, (uint8_t *)buf, (uint16_t)len, 20U);
+#else
+    (void)fmt;
+#endif
 }

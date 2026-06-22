@@ -20,16 +20,21 @@ static uint8_t s_k1_raw_level = 1U;
 static uint8_t s_k2_raw_level = 1U;
 static uint8_t s_k1_down;
 static uint8_t s_k2_down;
-static uint32_t s_k1_press_count;
-static uint32_t s_k2_press_count;
-static uint32_t s_k1_hold_ms;
-static uint32_t s_k2_hold_ms;
 static uint8_t s_run_enabled;
-static char s_key_event[APP_OLED_EVENT_SIZE] = "BOOT";
+static char s_mag_target[APP_OLED_EVENT_SIZE] = "NONE";
+static char s_mag_signal[APP_OLED_EVENT_SIZE] = "IDLE";
+static uint8_t s_mag_detected;
+static uint8_t s_mag_confidence_percent;
+static char s_capture_label[APP_OLED_EVENT_SIZE] = "BASE";
+static uint8_t s_capture_active;
+static uint32_t s_capture_remaining_ms = 10000UL;
+static uint32_t s_capture_sample_count;
+static int32_t s_capture_adc1_a_raw;
+static int32_t s_capture_adc1_b_raw;
+static int32_t s_capture_adc2_a_raw;
+static int32_t s_capture_adc2_b_raw;
 
 static const char *CS_StatusToStr(OLED_CS_Status status);
-static const char *App_OLED_PageToStr(AppOLED_Page page);
-static const char *App_OLED_DownToStr(uint8_t down);
 static void App_OLED_DrawCS1238Page(void);
 static void App_OLED_DrawKeyTestPage(void);
 static void App_OLED_ShowLine(uint8_t y, const char *line);
@@ -113,17 +118,56 @@ void App_OLED_SetButtonDebug(uint8_t k1_raw_level,
     s_k2_raw_level = (k2_raw_level != 0U) ? 1U : 0U;
     s_k1_down = (k1_down != 0U) ? 1U : 0U;
     s_k2_down = (k2_down != 0U) ? 1U : 0U;
-    s_k1_press_count = k1_press_count;
-    s_k2_press_count = k2_press_count;
-    s_k1_hold_ms = k1_hold_ms;
-    s_k2_hold_ms = k2_hold_ms;
+    (void)k1_press_count;
+    (void)k2_press_count;
+    (void)k1_hold_ms;
+    (void)k2_hold_ms;
     s_run_enabled = (run_enabled != 0U) ? 1U : 0U;
+    (void)event_text;
+}
 
-    if (event_text == NULL)
+void App_OLED_SetMagnetDebug(const char *target_text,
+                             const char *signal_text,
+                             uint8_t detected,
+                             uint8_t confidence_percent)
+{
+    if (target_text == NULL)
     {
-        event_text = "";
+        target_text = "NONE";
     }
-    snprintf(s_key_event, sizeof(s_key_event), "%s", event_text);
+    if (signal_text == NULL)
+    {
+        signal_text = "IDLE";
+    }
+
+    snprintf(s_mag_target, sizeof(s_mag_target), "%s", target_text);
+    snprintf(s_mag_signal, sizeof(s_mag_signal), "%s", signal_text);
+    s_mag_detected = (detected != 0U) ? 1U : 0U;
+    s_mag_confidence_percent = (confidence_percent > 100U) ? 100U : confidence_percent;
+}
+
+void App_OLED_SetCaptureDebug(const char *label_text,
+                              uint8_t active,
+                              uint32_t remaining_ms,
+                              uint32_t sample_count,
+                              int32_t adc1_a_raw,
+                              int32_t adc1_b_raw,
+                              int32_t adc2_a_raw,
+                              int32_t adc2_b_raw)
+{
+    if (label_text == NULL)
+    {
+        label_text = "BASE";
+    }
+
+    snprintf(s_capture_label, sizeof(s_capture_label), "%s", label_text);
+    s_capture_active = (active != 0U) ? 1U : 0U;
+    s_capture_remaining_ms = remaining_ms;
+    s_capture_sample_count = sample_count;
+    s_capture_adc1_a_raw = adc1_a_raw;
+    s_capture_adc1_b_raw = adc1_b_raw;
+    s_capture_adc2_a_raw = adc2_a_raw;
+    s_capture_adc2_b_raw = adc2_b_raw;
 }
 
 static const char *CS_StatusToStr(OLED_CS_Status status)
@@ -143,16 +187,6 @@ static const char *CS_StatusToStr(OLED_CS_Status status)
     default:
         return "WAIT";
     }
-}
-
-static const char *App_OLED_PageToStr(AppOLED_Page page)
-{
-    return (page == APP_OLED_PAGE_KEY_TEST) ? "KEY" : "CS";
-}
-
-static const char *App_OLED_DownToStr(uint8_t down)
-{
-    return (down != 0U) ? "DN" : "UP";
 }
 
 static void App_OLED_DrawCS1238Page(void)
@@ -178,9 +212,9 @@ static void App_OLED_DrawCS1238Page(void)
     snprintf(line, sizeof(line), "R2:%ld", (long)s_raw2);
     App_OLED_ShowLine(40U, line);
 
-    snprintf(line, sizeof(line), "K1:%lu K2:%lu",
-             (unsigned long)s_k1_press_count,
-             (unsigned long)s_k2_press_count);
+    snprintf(line, sizeof(line), "MAG:%.8s %.8s",
+             s_mag_target,
+             s_mag_signal);
     App_OLED_ShowLine(50U, line);
 }
 
@@ -188,32 +222,36 @@ static void App_OLED_DrawKeyTestPage(void)
 {
     char line[APP_OLED_LINE_SIZE];
 
-    snprintf(line, sizeof(line), "KEY TEST RUN:%s", (s_run_enabled != 0U) ? "ON" : "OFF");
+    snprintf(line, sizeof(line), "CAP:%s L:%s",
+             (s_capture_active != 0U) ? "RUN" : "IDLE",
+             s_capture_label);
     App_OLED_ShowLine(0U, line);
 
-    snprintf(line, sizeof(line), "PG:%s EV:%s", App_OLED_PageToStr(s_page), s_key_event);
+    snprintf(line, sizeof(line), "1A:%ld", (long)s_capture_adc1_a_raw);
     App_OLED_ShowLine(10U, line);
 
-    snprintf(line, sizeof(line), "K1 R:%u %s C:%lu",
-             (unsigned int)s_k1_raw_level,
-             App_OLED_DownToStr(s_k1_down),
-             (unsigned long)s_k1_press_count);
+    snprintf(line, sizeof(line), "1B:%ld", (long)s_capture_adc1_b_raw);
     App_OLED_ShowLine(20U, line);
 
-    snprintf(line, sizeof(line), "K2 R:%u %s C:%lu",
-             (unsigned int)s_k2_raw_level,
-             App_OLED_DownToStr(s_k2_down),
-             (unsigned long)s_k2_press_count);
+    snprintf(line, sizeof(line), "2A:%ld", (long)s_capture_adc2_a_raw);
     App_OLED_ShowLine(30U, line);
 
-    snprintf(line, sizeof(line), "H1:%lu H2:%lu",
-             (unsigned long)s_k1_hold_ms,
-             (unsigned long)s_k2_hold_ms);
+    snprintf(line, sizeof(line), "2B:%ld", (long)s_capture_adc2_b_raw);
     App_OLED_ShowLine(40U, line);
 
-    snprintf(line, sizeof(line), "CS1:%s CS2:%s",
-             CS_StatusToStr(s_cs1_status),
-             CS_StatusToStr(s_cs2_status));
+    if (s_capture_active != 0U)
+    {
+        snprintf(line, sizeof(line), "T:%lu.%lus N:%lu",
+                 (unsigned long)(s_capture_remaining_ms / 1000UL),
+                 (unsigned long)((s_capture_remaining_ms % 1000UL) / 100UL),
+                 (unsigned long)s_capture_sample_count);
+    }
+    else
+    {
+        snprintf(line, sizeof(line), "MAG:%.8s %.8s",
+                 s_mag_target,
+                 s_mag_signal);
+    }
     App_OLED_ShowLine(50U, line);
 }
 
