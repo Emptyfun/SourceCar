@@ -44,7 +44,9 @@ static void RawCapture_Stop(const char *reason);
 static void RawCapture_ProcessSample(const AppCS1238Snapshot_t *snapshot, uint32_t now);
 static void RawCapture_PrintSample(uint32_t now, char channel, int32_t raw);
 static void RawCapture_UpdateOLED(const AppCS1238Snapshot_t *snapshot, uint32_t now);
+#if APP_ENABLE_OLED
 static uint32_t RawCapture_RemainingMs(uint32_t now);
+#endif
 static void RawCapture_Printf(const char *fmt, ...);
 
 void App_RawCapture_Init(void)
@@ -248,6 +250,7 @@ static void RawCapture_UpdateOLED(const AppCS1238Snapshot_t *snapshot, uint32_t 
 #endif
 }
 
+#if APP_ENABLE_OLED
 static uint32_t RawCapture_RemainingMs(uint32_t now)
 {
     uint32_t elapsed;
@@ -265,6 +268,7 @@ static uint32_t RawCapture_RemainingMs(uint32_t now)
 
     return RAW_CAPTURE_DURATION_MS - elapsed;
 }
+#endif
 
 static void RawCapture_Printf(const char *fmt, ...)
 {

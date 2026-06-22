@@ -17,6 +17,27 @@
 #if APP_ENABLE_MAGNET_DETECT
 #include "app_magnet_detect.h"
 #endif
+#if APP_ENABLE_MOTOR_SERIAL
+#include "app_motor_serial.h"
+#endif
+#if APP_ENABLE_MOTOR_AUTO_TEST
+#include "app_motor_auto_test.h"
+#endif
+#if APP_ENABLE_MOTION
+#include "app_motion.h"
+#endif
+#if APP_ENABLE_MOTION_PRIMITIVE
+#include "app_motion_primitive.h"
+#endif
+#if APP_ENABLE_COVERAGE
+#include "app_coverage.h"
+#endif
+#if APP_ENABLE_TURN_CALIB
+#include "app_turn_calib.h"
+#endif
+#if APP_ENABLE_ODOMETRY
+#include "app_odometry.h"
+#endif
 #if APP_ENABLE_OLED
 #include "app_oled_ui.h"
 #endif
@@ -83,6 +104,34 @@ void App_Init(void)
 #if APP_ENABLE_RAW_CAPTURE
     App_RawCapture_Init();
 #endif
+
+#if APP_ENABLE_ODOMETRY
+    Odom_Init();
+#endif
+
+#if APP_ENABLE_MOTOR_SERIAL
+    App_MotorSerial_Init();
+#endif
+
+#if APP_ENABLE_MOTION
+    Motion_Init();
+#endif
+
+#if APP_ENABLE_MOTOR_AUTO_TEST
+    App_MotorAutoTest_Init();
+#endif
+
+#if APP_ENABLE_MOTION_PRIMITIVE
+    MotionPrimitive_Init();
+#endif
+
+#if APP_ENABLE_COVERAGE
+    Coverage_Init();
+#endif
+
+#if APP_ENABLE_TURN_CALIB
+    App_TurnCalib_Init();
+#endif
 }
 
 /**
@@ -117,6 +166,30 @@ void App_Loop(void)
 
 #if APP_ENABLE_RAW_CAPTURE
     App_RawCapture_Task();
+#endif
+
+#if APP_ENABLE_MOTOR_SERIAL
+    App_MotorSerial_Task();
+#endif
+
+#if APP_ENABLE_MOTOR_AUTO_TEST
+    App_MotorAutoTest_Task();
+#endif
+
+#if APP_ENABLE_MOTION_PRIMITIVE
+    MotionPrimitive_Task();
+#endif
+
+#if APP_ENABLE_COVERAGE
+    Coverage_Task();
+#endif
+
+#if APP_ENABLE_TURN_CALIB
+    App_TurnCalib_Task();
+#endif
+
+#if APP_ENABLE_MOTION
+    Motion_Task();
 #endif
 
 #if APP_ENABLE_OLED

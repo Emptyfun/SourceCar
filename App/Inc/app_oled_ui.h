@@ -14,7 +14,9 @@ typedef enum
 typedef enum
 {
     APP_OLED_PAGE_KEY_TEST = 0,
-    APP_OLED_PAGE_CS1238
+    APP_OLED_PAGE_CS1238,
+    APP_OLED_PAGE_COVERAGE,
+    APP_OLED_PAGE_TURN_CALIB
 } AppOLED_Page;
 
 void App_OLED_Init(void);
@@ -51,5 +53,17 @@ void App_OLED_SetCaptureDebug(const char *label_text,
                               int32_t adc1_b_raw,
                               int32_t adc2_a_raw,
                               int32_t adc2_b_raw);
+void App_OLED_SetCoverageDebug(uint8_t running,
+                               uint8_t pending_start,
+                               uint8_t row,
+                               uint8_t line_count,
+                               uint8_t state);
+void App_OLED_SetTurnCalibDebug(uint8_t state,
+                                uint8_t action,
+                                uint8_t dir_right,
+                                uint16_t speed,
+                                int8_t comp_deg,
+                                int16_t target_deg,
+                                int16_t progress_deg);
 
 #endif /* APP_OLED_UI_H */

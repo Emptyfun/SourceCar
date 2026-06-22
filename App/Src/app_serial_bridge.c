@@ -8,6 +8,7 @@
  */
 #include "app_serial_bridge.h"
 
+#include "app_config.h"
 #include "bsp_esp8266.h"
 #include "bsp_uart1.h"
 #include "bsp_uart2.h"
@@ -141,6 +142,7 @@ void AppSerialBridge_Process(void)
     SerialRouter_StartPendingTx();
 }
 
+#if APP_ENABLE_SERIAL_BRIDGE
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
@@ -178,6 +180,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
         SerialRouter_StartUart3Tx();
     }
 }
+#endif
 
 static void SerialRouter_StartUart1Rx(void)
 {

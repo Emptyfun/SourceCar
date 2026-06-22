@@ -46,12 +46,19 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     App/Src/app_button_test.c
+    App/Src/app_coverage.c
     App/Src/app_cs1238_task.c
     App/Src/app_magnet_detect.c
     App/Src/app_main.c
+    App/Src/app_motion.c
+    App/Src/app_motion_primitive.c
+    App/Src/app_motor_auto_test.c
+    App/Src/app_motor_serial.c
+    App/Src/app_odometry.c
     App/Src/app_oled_ui.c
     App/Src/app_raw_capture.c
     App/Src/app_serial_bridge.c
+    App/Src/app_turn_calib.c
     BSP/Src/bsp_system.c
     BSP/Src/bsp_clock.c
     BSP/Src/bsp_esp8266.c

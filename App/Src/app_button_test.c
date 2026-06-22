@@ -4,7 +4,24 @@
 #if APP_ENABLE_MAGNET_DETECT
 #include "app_magnet_detect.h"
 #endif
+#if APP_ENABLE_COVERAGE
+#include "app_coverage.h"
+#endif
+#if APP_ENABLE_TURN_CALIB
+#include "app_turn_calib.h"
+#endif
+#if APP_ENABLE_MOTION
+#include "app_motion.h"
+#endif
+#if APP_ENABLE_MOTION_PRIMITIVE
+#include "app_motion_primitive.h"
+#endif
+#if APP_ENABLE_MOTOR_SERIAL
+#include "app_motor_serial.h"
+#endif
+#if APP_ENABLE_OLED
 #include "app_oled_ui.h"
+#endif
 #if APP_ENABLE_RAW_CAPTURE
 #include "app_raw_capture.h"
 #endif
@@ -55,7 +72,15 @@ void App_ButtonTest_Init(void)
 
     s_run_enabled = 0U;
     s_last_event = "BOOT";
+#if APP_ENABLE_OLED
+#if APP_ENABLE_TURN_CALIB
+    App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
+#elif APP_ENABLE_COVERAGE
+    App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
+#else
     App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
+#endif
+#endif
     App_ButtonTest_UpdateOLED();
 }
 
@@ -148,6 +173,19 @@ static void App_ButtonTest_HandleShortPress(uint8_t index)
 {
     if (index == 1U)
     {
+#if APP_ENABLE_TURN_CALIB
+        s_last_event = "K1 TCAL SEL";
+#if APP_ENABLE_OLED
+        App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
+#endif
+        App_TurnCalib_Select();
+#elif APP_ENABLE_COVERAGE
+        s_last_event = "K1 SELECT";
+#if APP_ENABLE_OLED
+        App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
+#endif
+        MotorSerial_Printf("[KEY] K1 select reserved\r\n");
+#else
 #if APP_ENABLE_RAW_CAPTURE
         App_RawCapture_SelectNextLabel();
         s_run_enabled = App_RawCapture_IsActive();
@@ -156,16 +194,49 @@ static void App_ButtonTest_HandleShortPress(uint8_t index)
         s_run_enabled = (s_run_enabled == 0U) ? 1U : 0U;
         s_last_event = (s_run_enabled != 0U) ? "K1 RUN ON" : "K1 RUN OFF";
 #endif
+#endif
     }
     else
     {
+#if APP_ENABLE_TURN_CALIB
+#if APP_ENABLE_OLED
+        App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
+#endif
+        App_TurnCalib_Control();
+        s_run_enabled = App_TurnCalib_IsRunning();
+        s_last_event = "K2 TCAL OK";
+#elif APP_ENABLE_COVERAGE
+#if APP_ENABLE_OLED
+        App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
+#endif
+        if (Coverage_IsRunning() != 0U)
+        {
+            Coverage_Stop();
+            s_run_enabled = 0U;
+            s_last_event = "K2 COV STOP";
+            MotorSerial_Printf("[KEY] K2 coverage stop\r\n");
+        }
+        else
+        {
+            Coverage_Start();
+            s_run_enabled = 1U;
+            s_last_event = "K2 COV START";
+            MotorSerial_Printf("[KEY] K2 coverage start\r\n");
+        }
+#else
 #if APP_ENABLE_RAW_CAPTURE
         App_RawCapture_Toggle();
         s_run_enabled = App_RawCapture_IsActive();
         s_last_event = (s_run_enabled != 0U) ? "K2 CAP ON" : "K2 CAP OFF";
 #else
+#if APP_ENABLE_OLED
         App_OLED_TogglePage();
         s_last_event = (App_OLED_GetPage() == APP_OLED_PAGE_KEY_TEST) ? "K2 KEY" : "K2 CS";
+#else
+        s_run_enabled = (s_run_enabled == 0U) ? 1U : 0U;
+        s_last_event = (s_run_enabled != 0U) ? "K2 RUN ON" : "K2 RUN OFF";
+#endif
+#endif
 #endif
     }
 }
@@ -187,7 +258,31 @@ static void App_ButtonTest_ClearCounts(const char *event_text)
     s_k2.press_count = 0UL;
     s_run_enabled = 0U;
     s_last_event = event_text;
+#if APP_ENABLE_COVERAGE
+    Coverage_Stop();
+#endif
+#if APP_ENABLE_TURN_CALIB
+    App_TurnCalib_Stop();
+#endif
+#if APP_ENABLE_MOTION_PRIMITIVE
+    MotionPrimitive_Abort();
+#endif
+#if APP_ENABLE_MOTION
+    Motion_Stop();
+#endif
+#if APP_ENABLE_MOTOR_SERIAL
+    MotorSerial_Stop();
+    MotorSerial_Printf("[STOP] key long emergency\r\n");
+#endif
+#if APP_ENABLE_OLED
+#if APP_ENABLE_TURN_CALIB
+    App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
+#elif APP_ENABLE_COVERAGE
+    App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
+#else
     App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
+#endif
+#endif
 #if APP_ENABLE_MAGNET_DETECT
     App_MagDetect_RequestRecalibration();
 #endif
@@ -195,6 +290,7 @@ static void App_ButtonTest_ClearCounts(const char *event_text)
 
 static void App_ButtonTest_UpdateOLED(void)
 {
+#if APP_ENABLE_OLED
     App_OLED_SetButtonDebug(s_k1.raw_level,
                             s_k2.raw_level,
                             s_k1.stable_down,
@@ -205,6 +301,7 @@ static void App_ButtonTest_UpdateOLED(void)
                             s_k2.hold_ms,
                             s_run_enabled,
                             s_last_event);
+#endif
 }
 
 static uint8_t App_ButtonTest_ReadRawLevel(const AppButton_State *button)
