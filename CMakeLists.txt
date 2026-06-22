@@ -45,23 +45,22 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    App/Src/app_button_test.c
     App/Src/app_cs1238_task.c
     App/Src/app_main.c
+    App/Src/app_oled_ui.c
     App/Src/app_serial_bridge.c
-    App/Src/app_tlv493d_a1b6_debug.c
     BSP/Src/bsp_system.c
     BSP/Src/bsp_clock.c
     BSP/Src/bsp_esp8266.c
     BSP/Src/bsp_gpio.c
-    BSP/Src/bsp_i2c1.c
     BSP/Src/bsp_led.c
-    BSP/Src/bsp_tlx493d_probe.c
     BSP/Src/bsp_uart1.c
     BSP/Src/bsp_uart2.c
     BSP/Src/bsp_uart3.c
     Common/Src/ring_buffer.c
     Device/Src/dev_cs1238.c
-    Device/Src/dev_tlv493d_a1b6.c
+    Device/Src/dev_oled.c
 )
 
 # Add include paths

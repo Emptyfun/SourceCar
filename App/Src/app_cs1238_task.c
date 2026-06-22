@@ -1,6 +1,10 @@
 #include "app_cs1238_task.h"
 
+#include "app_config.h"
 #include "dev_cs1238.h"
+#if APP_ENABLE_OLED
+#include "app_oled_ui.h"
+#endif
 #include "usart.h"
 
 #include <stdarg.h>
@@ -27,8 +31,10 @@
 
 typedef enum
 {
-    APP_CS1238_STATUS_TIMEOUT = 0,
-    APP_CS1238_STATUS_OK
+    APP_CS1238_STATUS_WAIT = 0,
+    APP_CS1238_STATUS_OK,
+    APP_CS1238_STATUS_TIMEOUT,
+    APP_CS1238_STATUS_ERROR
 } AppCS1238_Status;
 
 typedef struct
@@ -89,8 +95,15 @@ static void App_CS1238_PrintStream(const AppCS1238_Device *dev,
                                    const AppCS1238_Stream *stream,
                                    uint32_t now,
                                    uint8_t stream_index);
+static AppCS1238_Status App_CS1238_StatusFromHAL(HAL_StatusTypeDef status);
 static const char *App_CS1238_HalStatusText(HAL_StatusTypeDef status);
 static void CS1238_DebugPrintf(const char *fmt, ...);
+#if APP_ENABLE_OLED
+static void App_CS1238_UpdateOLED(void);
+static uint8_t App_CS1238_ReadDataLevel(const CS1238_Handle *handle);
+static int32_t App_CS1238_GetDisplayRaw(const AppCS1238_Device *dev);
+static OLED_CS_Status App_CS1238_ToOLEDStatus(AppCS1238_Status status);
+#endif
 
 void App_CS1238_Init(void)
 {
@@ -117,6 +130,10 @@ void App_CS1238_Init(void)
                        (unsigned int)App_CS1238_ConfigForChannel(CS1238_CH_B),
                        App_CS1238_HalStatusText(adc1.config_status),
                        App_CS1238_HalStatusText(adc2.config_status));
+
+#if APP_ENABLE_OLED
+    App_CS1238_UpdateOLED();
+#endif
 }
 
 void App_CS1238_Task(void)
@@ -128,6 +145,10 @@ void App_CS1238_Task(void)
 #endif
 #if APP_CS1238_ENABLE_ADC2 && APP_CS1238_POLL_ADC2
     App_CS1238_PollDevice(&adc2);
+#endif
+
+#if APP_ENABLE_OLED
+    App_CS1238_UpdateOLED();
 #endif
 
     if ((uint32_t)(now - last_print_tick) >= APP_CS1238_PRINT_INTERVAL_MS)
@@ -161,20 +182,24 @@ static void App_CS1238_DeviceInit(AppCS1238_Device *dev,
     dev->active = 0U;
     dev->discard = APP_CS1238_DISCARD_COUNT;
     dev->config_status = HAL_ERROR;
-    dev->status = APP_CS1238_STATUS_TIMEOUT;
+    dev->status = APP_CS1238_STATUS_WAIT;
 
     if (enabled == 0U)
     {
+        dev->status = APP_CS1238_STATUS_ERROR;
         return;
     }
 
     CS1238_Init(handle);
     dev->config_status = App_CS1238_SelectActiveChannel(dev);
     dev->scan_enabled = (dev->config_status == HAL_OK) ? 1U : 0U;
+    dev->status = (dev->config_status == HAL_OK) ? APP_CS1238_STATUS_WAIT
+                                                  : App_CS1238_StatusFromHAL(dev->config_status);
 }
 
 static void App_CS1238_PollDevice(AppCS1238_Device *dev)
 {
+    HAL_StatusTypeDef read_status;
     int32_t raw;
 
     if (dev->scan_enabled == 0U)
@@ -187,9 +212,10 @@ static void App_CS1238_PollDevice(AppCS1238_Device *dev)
         return;
     }
 
-    if (CS1238_ReadRaw(dev->handle, &raw, 1U) != HAL_OK)
+    read_status = CS1238_ReadRaw(dev->handle, &raw, 1U);
+    if (read_status != HAL_OK)
     {
-        dev->status = APP_CS1238_STATUS_TIMEOUT;
+        dev->status = App_CS1238_StatusFromHAL(read_status);
         dev->scan_enabled = 0U;
         return;
     }
@@ -209,6 +235,7 @@ static void App_CS1238_PollDevice(AppCS1238_Device *dev)
     dev->config_status = App_CS1238_SelectActiveChannel(dev);
     if (dev->config_status != HAL_OK)
     {
+        dev->status = App_CS1238_StatusFromHAL(dev->config_status);
         dev->scan_enabled = 0U;
     }
 }
@@ -320,6 +347,23 @@ static void App_CS1238_PrintStream(const AppCS1238_Device *dev,
     CS1238_DebugPrintf("%s raw_avg=%ld\r\n", stream->name, (long)filtered.avg);
 }
 
+static AppCS1238_Status App_CS1238_StatusFromHAL(HAL_StatusTypeDef status)
+{
+    switch (status)
+    {
+    case HAL_OK:
+        return APP_CS1238_STATUS_OK;
+
+    case HAL_TIMEOUT:
+        return APP_CS1238_STATUS_TIMEOUT;
+
+    case HAL_BUSY:
+    case HAL_ERROR:
+    default:
+        return APP_CS1238_STATUS_ERROR;
+    }
+}
+
 static const char *App_CS1238_HalStatusText(HAL_StatusTypeDef status)
 {
     switch (status)
@@ -338,6 +382,84 @@ static const char *App_CS1238_HalStatusText(HAL_StatusTypeDef status)
         return "ERROR";
     }
 }
+
+#if APP_ENABLE_OLED
+static void App_CS1238_UpdateOLED(void)
+{
+    uint8_t data1 = App_CS1238_ReadDataLevel(adc1.handle);
+    uint8_t data2 = 1U;
+    OLED_CS_Status status1 = App_CS1238_ToOLEDStatus(adc1.status);
+    OLED_CS_Status status2 = OLED_CS_STATUS_WAIT;
+    int32_t raw1 = App_CS1238_GetDisplayRaw(&adc1);
+    int32_t raw2 = 0;
+
+#if APP_CS1238_ENABLE_ADC2
+    data2 = App_CS1238_ReadDataLevel(adc2.handle);
+    status2 = App_CS1238_ToOLEDStatus(adc2.status);
+    raw2 = App_CS1238_GetDisplayRaw(&adc2);
+#endif
+
+    App_OLED_SetCS1238Debug(data1, data2, status1, status2, raw1, raw2);
+}
+
+static uint8_t App_CS1238_ReadDataLevel(const CS1238_Handle *handle)
+{
+    if ((handle == NULL) || (handle->data_port == NULL))
+    {
+        return 1U;
+    }
+
+    return (HAL_GPIO_ReadPin(handle->data_port, handle->data_pin) == GPIO_PIN_SET) ? 1U : 0U;
+}
+
+static int32_t App_CS1238_GetDisplayRaw(const AppCS1238_Device *dev)
+{
+    const AppCS1238_Stream *best = NULL;
+    uint8_t i;
+
+    if (dev == NULL)
+    {
+        return 0;
+    }
+
+    for (i = 0U; i < APP_CS1238_CHANNEL_COUNT; i++)
+    {
+        const AppCS1238_Stream *stream = &dev->stream[i];
+
+        if (stream->has_latest == 0U)
+        {
+            continue;
+        }
+
+        if ((best == NULL) ||
+            ((uint32_t)(stream->latest_tick - best->latest_tick) < 0x80000000UL))
+        {
+            best = stream;
+        }
+    }
+
+    return (best != NULL) ? best->latest : 0;
+}
+
+static OLED_CS_Status App_CS1238_ToOLEDStatus(AppCS1238_Status status)
+{
+    switch (status)
+    {
+    case APP_CS1238_STATUS_OK:
+        return OLED_CS_STATUS_OK;
+
+    case APP_CS1238_STATUS_TIMEOUT:
+        return OLED_CS_STATUS_TIMEOUT;
+
+    case APP_CS1238_STATUS_ERROR:
+        return OLED_CS_STATUS_ERROR;
+
+    case APP_CS1238_STATUS_WAIT:
+    default:
+        return OLED_CS_STATUS_WAIT;
+    }
+}
+#endif
 
 static void CS1238_DebugPrintf(const char *fmt, ...)
 {

@@ -8,8 +8,14 @@
 #include "app_main.h"
 
 #include "app_config.h"
+#if APP_ENABLE_BUTTON_TEST
+#include "app_button_test.h"
+#endif
 #if APP_ENABLE_CS1238
 #include "app_cs1238_task.h"
+#endif
+#if APP_ENABLE_OLED
+#include "app_oled_ui.h"
 #endif
 #if APP_ENABLE_SERIAL_BRIDGE
 #include "app_serial_bridge.h"
@@ -48,10 +54,13 @@ void App_Init(void)
     BSP_UART3_Init(115200U);
 #endif
 
-    /*
-     * TLV493D stays disabled here.
-     * Do not call App_TLV493D_A1B6_DebugRunOnce().
-     */
+#if APP_ENABLE_OLED
+    App_OLED_Init();
+#endif
+
+#if APP_ENABLE_BUTTON_TEST
+    App_ButtonTest_Init();
+#endif
 
 #if APP_ENABLE_SERIAL_BRIDGE
     AppSerialBridge_Init();
@@ -75,11 +84,6 @@ void App_Loop(void)
     uint32_t now = HAL_GetTick();
 #endif
 
-    /*
-     * TLV493D stays disabled here.
-     * Do not call App_TLV493D_A1B6_DebugLoopTick().
-     */
-
 #if APP_ENABLE_SERIAL_BRIDGE
     /* Run the UART bridge so pending bytes are forwarded continuously. */
     AppSerialBridge_Process();
@@ -87,6 +91,14 @@ void App_Loop(void)
 
 #if APP_ENABLE_CS1238
     App_CS1238_Task();
+#endif
+
+#if APP_ENABLE_BUTTON_TEST
+    App_ButtonTest_Task();
+#endif
+
+#if APP_ENABLE_OLED
+    App_OLED_Task();
 #endif
 
 #if APP_ENABLE_LED_HEARTBEAT

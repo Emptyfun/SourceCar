@@ -24,7 +24,6 @@
 - LED 心跳保持启用，用来观察主循环是否正常运行。
 - CS1238 采样任务启用。
 - 3-UART router、ESP8266、USART2、USART3 当前默认不启动，避免影响 ADC 调试时序。
-- TLV493D 调试任务仍保留在代码中，但当前应用层不调用。
 
 ## 2. 总体结构
 
@@ -32,9 +31,9 @@
 
 - `Core/`：STM32Cube/HAL 启动、外设句柄、中断入口等底层工程代码。
 - `App/`：应用层主逻辑，负责按 `app_config.h` 启停功能模块。
-- `BSP/`：板级外设封装，比如时钟、GPIO、UART、LED、ESP8266 使能脚、I2C。
+- `BSP/`：板级外设封装，比如时钟、GPIO、UART、LED、ESP8266 使能脚。
 - `Common/`：通用工具，目前主要是环形缓冲区。
-- `Device/`：外设驱动，目前包含 CS1238 和 TLV493D-A1B6。
+- `Device/`：外设驱动，目前包含 CS1238。
 - `Protocol/`：协议相关占位/扩展模块。
 
 主入口在 `Core/Src/main.c`：
@@ -215,30 +214,7 @@ APP_ROUTE_PC_ESP_DEBUG
 所以这些功能不会在开机时启动。需要回到车控/ESP8266 联调时，再从
 `App/Inc/app_config.h` 打开对应宏。
 
-## 8. TLV493D 当前状态
-
-TLV493D-A1B6 驱动和调试代码仍然存在：
-
-- `Device/Src/dev_tlv493d_a1b6.c`
-- `Device/Inc/dev_tlv493d_a1b6.h`
-- `App/Src/app_tlv493d_a1b6_debug.c`
-- `App/Inc/app_tlv493d_a1b6_debug.h`
-
-当前 `App_Init()` 不调用：
-
-```c
-App_TLV493D_A1B6_DebugRunOnce();
-```
-
-当前 `App_Loop()` 不调用：
-
-```c
-App_TLV493D_A1B6_DebugLoopTick();
-```
-
-因此 TLV493D 当前保持禁用，不会周期性占用 I2C，也不会往 USART1 打印调试信息。
-
-## 9. 构建方式
+## 8. 构建方式
 
 工程使用 CMake preset：
 
@@ -260,7 +236,7 @@ SourceCar_HAL.elf
 SourceCar_HAL.hex
 ```
 
-## 10. 后续扩展建议
+## 9. 后续扩展建议
 
 - 如果继续调 CS1238，建议先保持串口路由和 ESP8266 关闭，避免额外中断和串口任务干扰采样时序。
 - ADC1 稳定后，再把 `APP_CS1238_POLL_ADC2` 和 `APP_CS1238_PRINT_ADC2` 打开，对比双 ADC 行为。

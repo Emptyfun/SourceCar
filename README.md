@@ -30,10 +30,10 @@ The active feature switches live in `App/Inc/app_config.h`:
 
 ```text
 App/       Application-level tasks and feature orchestration
-BSP/       Board support wrappers for clock, GPIO, UART, LED, ESP8266, I2C
+BSP/       Board support wrappers for clock, GPIO, UART, LED, and ESP8266
 Common/    Shared utilities, currently a ring buffer implementation
 Core/      STM32Cube/HAL startup code, handles, interrupts, and generated glue
-Device/    Device drivers, including CS1238 and TLV493D-A1B6
+Device/    Device drivers, currently including CS1238
 Docs/      Notes that describe the current firmware behavior
 Protocol/  Protocol-layer placeholders and motor/telemetry helpers
 cmake/     Toolchain and STM32CubeMX CMake integration
