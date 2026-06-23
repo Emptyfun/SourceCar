@@ -7,6 +7,7 @@ typedef enum
 {
     PRIM_IDLE = 0,
     PRIM_MOVE_DISTANCE,
+    PRIM_MOVE_DISTANCE_HEADING,
     PRIM_TURN_ANGLE,
     PRIM_DONE,
     PRIM_ERROR
@@ -14,6 +15,9 @@ typedef enum
 
 void MotionPrimitive_Init(void);
 void MotionPrimitive_MoveDistance_Start(float distance_mm, int16_t speed);
+void MotionPrimitive_MoveDistanceHeading_Start(float distance_mm,
+                                               int16_t speed,
+                                               float target_heading_deg);
 void MotionPrimitive_TurnAngle_Start(float angle_deg, int16_t turn_speed);
 void MotionPrimitive_Task(void);
 uint8_t MotionPrimitive_IsBusy(void);

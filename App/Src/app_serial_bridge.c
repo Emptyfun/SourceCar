@@ -250,8 +250,8 @@ void AppSerialBridge_SendCarString(const char *s)
 
 void AppSerialBridge_EmergencyStop(void)
 {
-    AppSerialBridge_SendCarString("$spd:0,0,0,0#");
-    SerialRouter_QueueUart1String("[STOP] key long -> USART2 $spd:0,0,0,0#\r\n");
+    AppSerialBridge_SendCarString("$pwm:0,0,0,0#");
+    SerialRouter_QueueUart1String("[STOP] key long -> USART2 $pwm:0,0,0,0#\r\n");
 }
 
 #if APP_ENABLE_SERIAL_BRIDGE

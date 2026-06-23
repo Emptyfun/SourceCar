@@ -98,7 +98,7 @@ static uint32_t s_last_feedback_print_tick;
 
 #if APP_DEBUG_TURN_OPTIMIZE_ONLY
 static const MotorInitStep_t s_init_steps[] = {
-    {"$spd:0,0,0,0#", MOTOR_INIT_STOP_SETTLE_MS, 0U},
+    {"$pwm:0,0,0,0#", MOTOR_INIT_STOP_SETTLE_MS, 0U},
     {"$upload:0,0,0#", MOTOR_INIT_STEP_PERIOD_MS, 1U},
     {"$mtype:1#", MOTOR_INIT_STEP_PERIOD_MS, 0U},
     {"$deadzone:1900#", MOTOR_INIT_STEP_PERIOD_MS, 0U},
@@ -110,7 +110,7 @@ static const MotorInitStep_t s_init_steps[] = {
 };
 #else
 static const MotorInitStep_t s_init_steps[] = {
-    {"$spd:0,0,0,0#", MOTOR_INIT_STOP_SETTLE_MS, 0U},
+    {"$pwm:0,0,0,0#", MOTOR_INIT_STOP_SETTLE_MS, 0U},
     {"$upload:0,0,0#", MOTOR_INIT_STEP_PERIOD_MS, 1U},
     {"$mtype:1#", MOTOR_INIT_STEP_PERIOD_MS, 0U},
     {"$deadzone:1900#", MOTOR_INIT_STEP_PERIOD_MS, 0U},
@@ -118,7 +118,7 @@ static const MotorInitStep_t s_init_steps[] = {
     {"$mphase:40#", MOTOR_INIT_STEP_PERIOD_MS, 0U},
     {"$wdiameter:65.000#", MOTOR_INIT_STEP_PERIOD_MS, 0U},
     {"$upload:1,0,0#", MOTOR_INIT_STEP_PERIOD_MS, 1U},
-    {"$spd:0,0,0,0#", MOTOR_INIT_STEP_PERIOD_MS, 0U}
+    {"$pwm:0,0,0,0#", MOTOR_INIT_STEP_PERIOD_MS, 0U}
 };
 #endif
 
@@ -190,9 +190,9 @@ void App_MotorSerial_Init(void)
     MotorSerial_QueuePcString("[KEY] K1 direction, K2 start/stop mag calib, long press emergency stop\r\n");
     MotorSerial_QueuePcString("[MCAL] serial: mcal start|stop|left|right|dir|speed N|status\r\n");
 #elif APP_ENABLE_COVERAGE
-    MotorSerial_QueuePcString("\r\n[BOOT] motor coverage firmware\r\n");
-    MotorSerial_QueuePcString("[KEY] K2 start/stop coverage, long press emergency stop\r\n");
-    MotorSerial_QueuePcString("[COV] 1m x 1m lawnmower path, serial input optional\r\n");
+    MotorSerial_QueuePcString("\r\n[BOOT] coverage button test firmware\r\n");
+    MotorSerial_QueuePcString("[KEY] K2 short=start/stop coverage, long press=emergency stop\r\n");
+    MotorSerial_QueuePcString("[COV] shift line uses HMC heading hold\r\n");
 #else
     MotorSerial_QueuePcString("\r\n[BOOT] motor debug firmware\r\n");
     MotorSerial_QueuePcString("[KEY] long press emergency stop\r\n");
@@ -291,7 +291,6 @@ void MotorSerial_SendPWM(int16_t m1, int16_t m2, int16_t m3, int16_t m4)
 
 void MotorSerial_Stop(void)
 {
-    MotorSerial_SendSpeed(0, 0, 0, 0);
     MotorSerial_SendPWM(0, 0, 0, 0);
 }
 
@@ -307,7 +306,6 @@ void MotorSerial_EmergencyStop(void)
     MotorSerial_ClearMotorTxQueue();
     for (i = 0U; i < MOTOR_EMERGENCY_STOP_REPEAT; i++)
     {
-        MotorSerial_SendSpeed(0, 0, 0, 0);
         MotorSerial_SendPWM(0, 0, 0, 0);
     }
 }

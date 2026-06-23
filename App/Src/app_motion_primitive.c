@@ -22,6 +22,15 @@
 #define PRIM_STRAIGHT_WZ_LIMIT      60
 #define PRIM_TIMEOUT_MS             20000U
 
+#define PRIM_HEADING_HOLD_ENABLE    1
+#define PRIM_HEADING_CTRL_PERIOD_MS 50U
+#define PRIM_HEADING_LOG_PERIOD_MS  200U
+#define PRIM_HEADING_KP             8.0f
+#define PRIM_HEADING_DEADBAND_DEG   2.0f
+#define PRIM_HEADING_MAX_WZ         35
+#define PRIM_HEADING_RAMP_STEP      5
+#define PRIM_HEADING_WZ_SIGN        1
+
 typedef enum
 {
     PRIM_TURN_PHASE_IDLE = 0,
@@ -43,6 +52,9 @@ static int16_t s_turn_cmd_wz;
 static uint8_t s_turn_debug_enabled = 1U;
 static float s_turn_progress_deg;
 static float s_turn_last_heading_deg;
+static float s_heading_target_deg;
+static int16_t s_heading_cmd_wz;
+static uint32_t s_last_heading_log_tick;
 
 static float Prim_AbsFloat(float value);
 static int16_t Prim_AbsI16(int16_t value);
@@ -50,7 +62,12 @@ static int16_t Prim_AbsI16(int16_t value);
 static int16_t Prim_ClampI16(int32_t value, int16_t limit_abs);
 static int16_t Prim_RoundFloatToI16(float value);
 #endif
+static float Prim_WrapTo180(float deg);
+static int16_t Prim_RampToI16(int16_t current, int16_t target, int16_t step);
+static int16_t Prim_ClampSignedI16(int16_t value, int16_t limit_abs);
+static int16_t Prim_RoundFloatToI16_All(float value);
 static void Prim_RunMoveDistance(uint32_t now);
+static void Prim_RunMoveDistanceHeading(uint32_t now);
 static void Prim_RunTurnAngle(uint32_t now);
 static void Prim_UpdateStraightHeadingHold(uint32_t now);
 static float Prim_GetTurnProgressDeg(void);
@@ -82,6 +99,9 @@ void MotionPrimitive_Init(void)
     s_turn_cmd_wz = 0;
     s_turn_progress_deg = 0.0f;
     s_turn_last_heading_deg = 0.0f;
+    s_heading_target_deg = 0.0f;
+    s_heading_cmd_wz = 0;
+    s_last_heading_log_tick = 0UL;
 }
 
 void MotionPrimitive_MoveDistance_Start(float distance_mm, int16_t speed)
@@ -118,6 +138,38 @@ void MotionPrimitive_MoveDistance_Start(float distance_mm, int16_t speed)
     MotorSerial_Printf("[PRIM] move start target=%ldmm speed=%d\r\n",
                        (long)distance_mm,
                        (int)s_speed);
+}
+
+void MotionPrimitive_MoveDistanceHeading_Start(float distance_mm,
+                                               int16_t speed,
+                                               float target_heading_deg)
+{
+    if (speed < 0)
+    {
+        speed = (int16_t)-speed;
+    }
+    if (speed == 0)
+    {
+        speed = 100;
+    }
+
+    Odom_ResetLocalAccum();
+    s_turn_phase = PRIM_TURN_PHASE_IDLE;
+    s_move_target_mm = distance_mm;
+    s_speed = (distance_mm >= 0.0f) ? speed : (int16_t)-speed;
+    s_state = PRIM_MOVE_DISTANCE_HEADING;
+    s_start_tick = HAL_GetTick();
+    s_last_control_tick = s_start_tick;
+    s_last_heading_log_tick = s_start_tick;
+    s_heading_target_deg = target_heading_deg;
+    s_heading_cmd_wz = 0;
+
+    Motion_SetVxWz(s_speed, 0);
+
+    MotorSerial_Printf("[PRIM-HH] start target=%ldmm speed=%d heading=%ld\r\n",
+                       (long)distance_mm,
+                       (int)s_speed,
+                       (long)s_heading_target_deg);
 }
 
 void MotionPrimitive_TurnAngle_Start(float angle_deg, int16_t turn_speed)
@@ -161,7 +213,9 @@ void MotionPrimitive_Task(void)
 {
     uint32_t now = HAL_GetTick();
 
-    if ((s_state != PRIM_MOVE_DISTANCE) && (s_state != PRIM_TURN_ANGLE))
+    if ((s_state != PRIM_MOVE_DISTANCE) &&
+        (s_state != PRIM_MOVE_DISTANCE_HEADING) &&
+        (s_state != PRIM_TURN_ANGLE))
     {
         return;
     }
@@ -178,6 +232,10 @@ void MotionPrimitive_Task(void)
     {
         Prim_RunMoveDistance(now);
     }
+    else if (s_state == PRIM_MOVE_DISTANCE_HEADING)
+    {
+        Prim_RunMoveDistanceHeading(now);
+    }
     else
     {
         Prim_RunTurnAngle(now);
@@ -186,7 +244,9 @@ void MotionPrimitive_Task(void)
 
 uint8_t MotionPrimitive_IsBusy(void)
 {
-    return ((s_state == PRIM_MOVE_DISTANCE) || (s_state == PRIM_TURN_ANGLE)) ? 1U : 0U;
+    return ((s_state == PRIM_MOVE_DISTANCE) ||
+            (s_state == PRIM_MOVE_DISTANCE_HEADING) ||
+            (s_state == PRIM_TURN_ANGLE)) ? 1U : 0U;
 }
 
 uint8_t MotionPrimitive_IsDone(void)
@@ -205,6 +265,7 @@ void MotionPrimitive_ClearDone(void)
     {
         s_state = PRIM_IDLE;
         s_turn_phase = PRIM_TURN_PHASE_IDLE;
+        s_heading_cmd_wz = 0;
     }
 }
 
@@ -213,6 +274,7 @@ void MotionPrimitive_Abort(void)
     Motion_Stop();
     s_state = PRIM_IDLE;
     s_turn_phase = PRIM_TURN_PHASE_IDLE;
+    s_heading_cmd_wz = 0;
 }
 
 MotionPrimitiveState_t MotionPrimitive_GetState(void)
@@ -267,6 +329,78 @@ static int16_t Prim_RoundFloatToI16(float value)
 }
 #endif
 
+static float Prim_WrapTo180(float deg)
+{
+    while (deg > 180.0f)
+    {
+        deg -= 360.0f;
+    }
+
+    while (deg < -180.0f)
+    {
+        deg += 360.0f;
+    }
+
+    return deg;
+}
+
+static int16_t Prim_RampToI16(int16_t current, int16_t target, int16_t step)
+{
+    if (step <= 0)
+    {
+        return target;
+    }
+
+    if (current < target)
+    {
+        current = (int16_t)(current + step);
+        if (current > target)
+        {
+            current = target;
+        }
+    }
+    else if (current > target)
+    {
+        current = (int16_t)(current - step);
+        if (current < target)
+        {
+            current = target;
+        }
+    }
+
+    return current;
+}
+
+static int16_t Prim_ClampSignedI16(int16_t value, int16_t limit_abs)
+{
+    if (limit_abs < 0)
+    {
+        limit_abs = (int16_t)-limit_abs;
+    }
+
+    if (value > limit_abs)
+    {
+        return limit_abs;
+    }
+
+    if (value < (int16_t)-limit_abs)
+    {
+        return (int16_t)-limit_abs;
+    }
+
+    return value;
+}
+
+static int16_t Prim_RoundFloatToI16_All(float value)
+{
+    if (value >= 0.0f)
+    {
+        return (int16_t)(value + 0.5f);
+    }
+
+    return (int16_t)(value - 0.5f);
+}
+
 static void Prim_RunMoveDistance(uint32_t now)
 {
     float progress = Odom_GetForwardAccumMm();
@@ -284,6 +418,77 @@ static void Prim_RunMoveDistance(uint32_t now)
     }
 
     Prim_UpdateStraightHeadingHold(now);
+}
+
+static void Prim_RunMoveDistanceHeading(uint32_t now)
+{
+    float progress = Odom_GetForwardAccumMm();
+    float target_abs = Prim_AbsFloat(s_move_target_mm);
+    float done_threshold = (target_abs > PRIM_DISTANCE_TOLERANCE_MM) ?
+                           (target_abs - PRIM_DISTANCE_TOLERANCE_MM) :
+                           0.0f;
+
+    if (Prim_AbsFloat(progress) >= done_threshold)
+    {
+        Motion_Stop();
+        s_heading_cmd_wz = 0;
+        s_state = PRIM_DONE;
+        MotorSerial_Printf("[PRIM-HH] done progress=%ldmm\r\n", (long)progress);
+        return;
+    }
+
+    if ((uint32_t)(now - s_last_control_tick) < PRIM_HEADING_CTRL_PERIOD_MS)
+    {
+        return;
+    }
+
+    s_last_control_tick = now;
+
+#if PRIM_HEADING_HOLD_ENABLE
+    if (App_HMC5883L_IsReady() == 0U)
+    {
+        s_heading_cmd_wz = Prim_RampToI16(s_heading_cmd_wz,
+                                          0,
+                                          PRIM_HEADING_RAMP_STEP);
+        Motion_SetVxWz(s_speed, s_heading_cmd_wz);
+        return;
+    }
+
+    {
+        float heading = App_HMC5883L_GetHeadingDeg();
+        float error_deg = Prim_WrapTo180(s_heading_target_deg - heading);
+        float abs_err = Prim_AbsFloat(error_deg);
+        int16_t target_wz = 0;
+
+        if (abs_err > PRIM_HEADING_DEADBAND_DEG)
+        {
+            float wz_f = (float)PRIM_HEADING_WZ_SIGN *
+                         PRIM_HEADING_KP *
+                         error_deg;
+
+            target_wz = Prim_RoundFloatToI16_All(wz_f);
+            target_wz = Prim_ClampSignedI16(target_wz, PRIM_HEADING_MAX_WZ);
+        }
+
+        s_heading_cmd_wz = Prim_RampToI16(s_heading_cmd_wz,
+                                          target_wz,
+                                          PRIM_HEADING_RAMP_STEP);
+        Motion_SetVxWz(s_speed, s_heading_cmd_wz);
+
+        if ((uint32_t)(now - s_last_heading_log_tick) >= PRIM_HEADING_LOG_PERIOD_MS)
+        {
+            s_last_heading_log_tick = now;
+            MotorSerial_Printf("[PRIM-HH] prog=%ld head=%ld target=%ld err=%ld wz=%d\r\n",
+                               (long)progress,
+                               (long)heading,
+                               (long)s_heading_target_deg,
+                               (long)error_deg,
+                               (int)s_heading_cmd_wz);
+        }
+    }
+#else
+    Motion_SetVxWz(s_speed, 0);
+#endif
 }
 
 static void Prim_RunTurnAngle(uint32_t now)

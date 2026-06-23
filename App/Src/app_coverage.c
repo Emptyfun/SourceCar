@@ -1,7 +1,7 @@
 #include "app_coverage.h"
 
 #include "app_config.h"
-#if APP_ENABLE_HMC5883L_TURN_CLOSED_LOOP
+#if APP_ENABLE_HMC5883L
 #include "app_hmc5883l.h"
 #endif
 #include "app_motion.h"
@@ -13,7 +13,7 @@
 
 #define COVERAGE_AREA_X_MM          1000.0f
 #define COVERAGE_AREA_Y_MM          1000.0f
-#define COVERAGE_LINE_SPACING_MM    100.0f
+#define COVERAGE_LINE_SPACING_MM    200.0f
 
 #define COVERAGE_FORWARD_SPEED      120
 #define COVERAGE_TURN_SPEED         60
@@ -25,6 +25,9 @@ static uint8_t s_pending_start;
 static uint8_t s_row;
 static uint8_t s_line_count;
 static int8_t s_turn_sign;
+static float s_base_heading_deg;
+static float s_run_heading_deg;
+static float s_shift_heading_deg;
 
 static void Coverage_Begin(void);
 static void Coverage_Enter(CoverageState_t state);
@@ -34,6 +37,9 @@ static void Coverage_StartTurnOut(void);
 static void Coverage_StartShiftLine(void);
 static void Coverage_StartTurnBack(void);
 static uint8_t Coverage_IsStartReady(void);
+static float Coverage_Normalize360(float deg);
+static float Coverage_GetRunHeadingTarget(void);
+static float Coverage_GetShiftHeadingTarget(void);
 static const char *Coverage_StateText(CoverageState_t state);
 
 void Coverage_Init(void)
@@ -44,6 +50,9 @@ void Coverage_Init(void)
     s_row = 0U;
     s_line_count = (uint8_t)((uint16_t)(COVERAGE_AREA_Y_MM / COVERAGE_LINE_SPACING_MM) + 1U);
     s_turn_sign = 1;
+    s_base_heading_deg = 0.0f;
+    s_run_heading_deg = 0.0f;
+    s_shift_heading_deg = 0.0f;
     Coverage_UpdateOLED();
 }
 
@@ -168,8 +177,22 @@ static void Coverage_Begin(void)
     s_running = 1U;
     s_row = 0U;
     s_line_count = (uint8_t)((uint16_t)(COVERAGE_AREA_Y_MM / COVERAGE_LINE_SPACING_MM) + 1U);
-    MotorSerial_Printf("[COV] start area=1000x1000 spacing=100 lines=%u\r\n",
+#if APP_ENABLE_HMC5883L
+    if (App_HMC5883L_IsReady() != 0U)
+    {
+        s_base_heading_deg = App_HMC5883L_GetHeadingDeg();
+    }
+    else
+#endif
+    {
+        s_base_heading_deg = 0.0f;
+    }
+    MotorSerial_Printf("[COV] start area=%ldx%ld spacing=%ld lines=%u\r\n",
+                       (long)COVERAGE_AREA_X_MM,
+                       (long)COVERAGE_AREA_Y_MM,
+                       (long)COVERAGE_LINE_SPACING_MM,
                        (unsigned int)s_line_count);
+    MotorSerial_Printf("[COV] base heading=%ld\r\n", (long)s_base_heading_deg);
     Coverage_StartRunLine();
 }
 
@@ -196,7 +219,15 @@ static void Coverage_UpdateOLED(void)
 static void Coverage_StartRunLine(void)
 {
     Coverage_Enter(COVERAGE_RUN_LINE);
+#if APP_ENABLE_HMC5883L
+    s_run_heading_deg = Coverage_GetRunHeadingTarget();
+    MotorSerial_Printf("[COV] run heading target=%ld\r\n", (long)s_run_heading_deg);
+    MotionPrimitive_MoveDistanceHeading_Start(COVERAGE_AREA_X_MM,
+                                               COVERAGE_FORWARD_SPEED,
+                                               s_run_heading_deg);
+#else
     MotionPrimitive_MoveDistance_Start(COVERAGE_AREA_X_MM, COVERAGE_FORWARD_SPEED);
+#endif
 }
 
 static void Coverage_StartTurnOut(void)
@@ -212,7 +243,18 @@ static void Coverage_StartTurnOut(void)
 static void Coverage_StartShiftLine(void)
 {
     Coverage_Enter(COVERAGE_SHIFT_LINE);
+#if APP_ENABLE_HMC5883L
+    s_shift_heading_deg = Coverage_GetShiftHeadingTarget();
+
+    MotorSerial_Printf("[COV] shift heading target=%ld dir=%s\r\n",
+                       (long)s_shift_heading_deg,
+                       (s_turn_sign > 0) ? "R" : "L");
+    MotionPrimitive_MoveDistanceHeading_Start(COVERAGE_LINE_SPACING_MM,
+                                               COVERAGE_SHIFT_SPEED,
+                                               s_shift_heading_deg);
+#else
     MotionPrimitive_MoveDistance_Start(COVERAGE_LINE_SPACING_MM, COVERAGE_SHIFT_SPEED);
+#endif
 }
 
 static void Coverage_StartTurnBack(void)
@@ -228,7 +270,7 @@ static uint8_t Coverage_IsStartReady(void)
         return 0U;
     }
 
-#if APP_ENABLE_HMC5883L_TURN_CLOSED_LOOP
+#if APP_ENABLE_HMC5883L
     if (App_HMC5883L_IsReady() == 0U)
     {
         return 0U;
@@ -236,6 +278,38 @@ static uint8_t Coverage_IsStartReady(void)
 #endif
 
     return 1U;
+}
+
+static float Coverage_Normalize360(float deg)
+{
+    while (deg < 0.0f)
+    {
+        deg += 360.0f;
+    }
+
+    while (deg >= 360.0f)
+    {
+        deg -= 360.0f;
+    }
+
+    return deg;
+}
+
+static float Coverage_GetRunHeadingTarget(void)
+{
+    float row_heading_deg = s_base_heading_deg;
+
+    if ((s_row % 2U) != 0U)
+    {
+        row_heading_deg = Coverage_Normalize360(row_heading_deg + 180.0f);
+    }
+
+    return row_heading_deg;
+}
+
+static float Coverage_GetShiftHeadingTarget(void)
+{
+    return Coverage_Normalize360(Coverage_GetRunHeadingTarget() + ((float)s_turn_sign * 90.0f));
 }
 
 static const char *Coverage_StateText(CoverageState_t state)

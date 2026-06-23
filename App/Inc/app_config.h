@@ -18,7 +18,7 @@
 #endif
 
 #ifndef APP_DEBUG_TURN_OPTIMIZE_ONLY
-#define APP_DEBUG_TURN_OPTIMIZE_ONLY 1
+#define APP_DEBUG_TURN_OPTIMIZE_ONLY 0
 #endif
 
 /*
