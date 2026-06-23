@@ -1,5 +1,6 @@
 #include "app_motion.h"
 
+#include "app_config.h"
 #include "app_motor_serial.h"
 #include "stm32f1xx_hal.h"
 
@@ -25,7 +26,9 @@ void Motion_Init(void)
     s_dirty = 0U;
     s_last_cmd_tick = 0UL;
     s_move_start_tick = 0UL;
+#if !APP_DEBUG_TURN_OPTIMIZE_ONLY
     Motion_Stop();
+#endif
 }
 
 void Motion_Task(void)
@@ -37,7 +40,11 @@ void Motion_Task(void)
         if (((uint32_t)(now - s_move_start_tick) > MOTOR_FEEDBACK_TIMEOUT_MS) &&
             (MotorSerial_HasRecentFeedback(MOTOR_FEEDBACK_TIMEOUT_MS) == 0U))
         {
+#if APP_DEBUG_TURN_OPTIMIZE_ONLY
+            MotorSerial_StopOutput();
+#else
             MotorSerial_Stop();
+#endif
             s_active = 0U;
             s_dirty = 0U;
             MotorSerial_Printf("[MOTION] stop feedback timeout\r\n");
@@ -69,6 +76,17 @@ void Motion_Stop(void)
     s_active = 0U;
     s_dirty = 0U;
     MotorSerial_Stop();
+}
+
+void Motion_StopOutput(void)
+{
+    s_target_m[0] = 0;
+    s_target_m[1] = 0;
+    s_target_m[2] = 0;
+    s_target_m[3] = 0;
+    s_active = 0U;
+    s_dirty = 0U;
+    MotorSerial_StopOutput();
 }
 
 void Motion_SetWheelSpeed(int16_t m1, int16_t m2, int16_t m3, int16_t m4)

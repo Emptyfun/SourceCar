@@ -22,5 +22,6 @@ uint8_t MotionPrimitive_IsError(void);
 void MotionPrimitive_ClearDone(void);
 void MotionPrimitive_Abort(void);
 MotionPrimitiveState_t MotionPrimitive_GetState(void);
+void MotionPrimitive_SetTurnDebug(uint8_t enabled);
 
 #endif /* APP_MOTION_PRIMITIVE_H */

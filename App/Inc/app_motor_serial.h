@@ -33,6 +33,8 @@ void MotorSerial_SendUploadMode(uint8_t upload_all_encoder,
 void MotorSerial_SendSpeed(int16_t m1, int16_t m2, int16_t m3, int16_t m4);
 void MotorSerial_SendPWM(int16_t m1, int16_t m2, int16_t m3, int16_t m4);
 void MotorSerial_Stop(void);
+void MotorSerial_StopOutput(void);
+void MotorSerial_EmergencyStop(void);
 
 void MotorSerial_Printf(const char *fmt, ...);
 uint8_t MotorSerial_HasRecentFeedback(uint32_t timeout_ms);

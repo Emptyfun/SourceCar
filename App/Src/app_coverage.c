@@ -1,6 +1,9 @@
 #include "app_coverage.h"
 
 #include "app_config.h"
+#if APP_ENABLE_HMC5883L_TURN_CLOSED_LOOP
+#include "app_hmc5883l.h"
+#endif
 #include "app_motion.h"
 #include "app_motion_primitive.h"
 #include "app_motor_serial.h"
@@ -13,7 +16,7 @@
 #define COVERAGE_LINE_SPACING_MM    100.0f
 
 #define COVERAGE_FORWARD_SPEED      120
-#define COVERAGE_TURN_SPEED         100
+#define COVERAGE_TURN_SPEED         60
 #define COVERAGE_SHIFT_SPEED        100
 
 static CoverageState_t s_state;
@@ -30,6 +33,7 @@ static void Coverage_StartRunLine(void);
 static void Coverage_StartTurnOut(void);
 static void Coverage_StartShiftLine(void);
 static void Coverage_StartTurnBack(void);
+static uint8_t Coverage_IsStartReady(void);
 static const char *Coverage_StateText(CoverageState_t state);
 
 void Coverage_Init(void)
@@ -50,10 +54,10 @@ void Coverage_Start(void)
         return;
     }
 
-    if (MotorSerial_IsInitDone() == 0U)
+    if (Coverage_IsStartReady() == 0U)
     {
         s_pending_start = 1U;
-        MotorSerial_Printf("[COV] start pending, wait motor init\r\n");
+        MotorSerial_Printf("[COV] start pending, wait motor/HMC\r\n");
         Coverage_UpdateOLED();
         return;
     }
@@ -80,7 +84,7 @@ void Coverage_Stop(void)
 
 void Coverage_Task(void)
 {
-    if ((s_pending_start != 0U) && (MotorSerial_IsInitDone() != 0U))
+    if ((s_pending_start != 0U) && (Coverage_IsStartReady() != 0U))
     {
         Coverage_Begin();
     }
@@ -215,6 +219,23 @@ static void Coverage_StartTurnBack(void)
 {
     Coverage_Enter(COVERAGE_TURN_BACK);
     MotionPrimitive_TurnAngle_Start((float)(90 * s_turn_sign), COVERAGE_TURN_SPEED);
+}
+
+static uint8_t Coverage_IsStartReady(void)
+{
+    if (MotorSerial_IsInitDone() == 0U)
+    {
+        return 0U;
+    }
+
+#if APP_ENABLE_HMC5883L_TURN_CLOSED_LOOP
+    if (App_HMC5883L_IsReady() == 0U)
+    {
+        return 0U;
+    }
+#endif
+
+    return 1U;
 }
 
 static const char *Coverage_StateText(CoverageState_t state)

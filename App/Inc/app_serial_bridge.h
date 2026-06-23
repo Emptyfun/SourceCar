@@ -18,5 +18,7 @@ void AppSerialBridge_Init(void);
  * @brief Route pending bytes between UART queues and start transmissions.
  */
 void AppSerialBridge_Process(void);
+void AppSerialBridge_SendCarString(const char *s);
+void AppSerialBridge_EmergencyStop(void);
 
 #endif /* APP_SERIAL_BRIDGE_H */

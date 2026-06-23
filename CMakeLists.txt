@@ -48,6 +48,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/app_button_test.c
     App/Src/app_coverage.c
     App/Src/app_cs1238_task.c
+    App/Src/app_hmc5883l.c
+    App/Src/app_mag_calib.c
     App/Src/app_magnet_detect.c
     App/Src/app_main.c
     App/Src/app_motion.c
@@ -59,11 +61,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/app_raw_capture.c
     App/Src/app_serial_bridge.c
     App/Src/app_turn_calib.c
+    App/Src/app_turn_debug.c
     BSP/Src/bsp_system.c
     BSP/Src/bsp_clock.c
+    BSP/Src/bsp_debug_uart.c
     BSP/Src/bsp_esp8266.c
     BSP/Src/bsp_gpio.c
     BSP/Src/bsp_led.c
+    BSP/Src/bsp_soft_i2c_hmc.c
     BSP/Src/bsp_uart1.c
     BSP/Src/bsp_uart2.c
     BSP/Src/bsp_uart3.c

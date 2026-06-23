@@ -8,6 +8,9 @@
 #include "app_main.h"
 
 #include "app_config.h"
+#if APP_ENABLE_HMC5883L
+#include "app_hmc5883l.h"
+#endif
 #if APP_ENABLE_BUTTON_TEST
 #include "app_button_test.h"
 #endif
@@ -16,6 +19,9 @@
 #endif
 #if APP_ENABLE_MAGNET_DETECT
 #include "app_magnet_detect.h"
+#endif
+#if APP_ENABLE_MAG_CALIB
+#include "app_mag_calib.h"
 #endif
 #if APP_ENABLE_MOTOR_SERIAL
 #include "app_motor_serial.h"
@@ -34,6 +40,9 @@
 #endif
 #if APP_ENABLE_TURN_CALIB
 #include "app_turn_calib.h"
+#endif
+#if APP_ENABLE_TURN_DEBUG
+#include "app_turn_debug.h"
 #endif
 #if APP_ENABLE_ODOMETRY
 #include "app_odometry.h"
@@ -69,6 +78,13 @@
  */
 void App_Init(void)
 {
+#if APP_DEBUG_HMC5883L_ONLY
+#if APP_ENABLE_LED_HEARTBEAT
+    BSP_LED_Init();
+#endif
+
+    App_HMC5883L_Init();
+#else
 #if APP_ENABLE_LED_HEARTBEAT
     BSP_LED_Init();
 #endif
@@ -113,6 +129,10 @@ void App_Init(void)
     App_MotorSerial_Init();
 #endif
 
+#if APP_ENABLE_HMC5883L
+    App_HMC5883L_Init();
+#endif
+
 #if APP_ENABLE_MOTION
     Motion_Init();
 #endif
@@ -129,8 +149,17 @@ void App_Init(void)
     Coverage_Init();
 #endif
 
+#if APP_ENABLE_MAG_CALIB
+    App_MagCalib_Init();
+#endif
+
 #if APP_ENABLE_TURN_CALIB
     App_TurnCalib_Init();
+#endif
+
+#if APP_ENABLE_TURN_DEBUG
+    App_TurnDebug_Init();
+#endif
 #endif
 }
 
@@ -142,6 +171,22 @@ void App_Init(void)
  */
 void App_Loop(void)
 {
+#if APP_DEBUG_HMC5883L_ONLY
+#if APP_ENABLE_LED_HEARTBEAT
+    static uint32_t last_heartbeat_tick = 0;
+    uint32_t now = HAL_GetTick();
+#endif
+
+    App_HMC5883L_Task();
+
+#if APP_ENABLE_LED_HEARTBEAT
+    if ((uint32_t)(now - last_heartbeat_tick) >= APP_HEARTBEAT_INTERVAL_MS)
+    {
+        last_heartbeat_tick = now;
+        BSP_LED_Toggle();
+    }
+#endif
+#else
 #if APP_ENABLE_LED_HEARTBEAT
     static uint32_t last_heartbeat_tick = 0;
     uint32_t now = HAL_GetTick();
@@ -172,6 +217,10 @@ void App_Loop(void)
     App_MotorSerial_Task();
 #endif
 
+#if APP_ENABLE_HMC5883L
+    App_HMC5883L_Task();
+#endif
+
 #if APP_ENABLE_MOTOR_AUTO_TEST
     App_MotorAutoTest_Task();
 #endif
@@ -184,8 +233,16 @@ void App_Loop(void)
     Coverage_Task();
 #endif
 
+#if APP_ENABLE_MAG_CALIB
+    App_MagCalib_Task();
+#endif
+
 #if APP_ENABLE_TURN_CALIB
     App_TurnCalib_Task();
+#endif
+
+#if APP_ENABLE_TURN_DEBUG
+    App_TurnDebug_Task();
 #endif
 
 #if APP_ENABLE_MOTION
@@ -203,5 +260,6 @@ void App_Loop(void)
         last_heartbeat_tick = now;
         BSP_LED_Toggle();
     }
+#endif
 #endif
 }

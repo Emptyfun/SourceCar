@@ -4,6 +4,9 @@
 #if APP_ENABLE_MAGNET_DETECT
 #include "app_magnet_detect.h"
 #endif
+#if APP_ENABLE_MAG_CALIB
+#include "app_mag_calib.h"
+#endif
 #if APP_ENABLE_COVERAGE
 #include "app_coverage.h"
 #endif
@@ -24,6 +27,9 @@
 #endif
 #if APP_ENABLE_RAW_CAPTURE
 #include "app_raw_capture.h"
+#endif
+#if APP_ENABLE_SERIAL_BRIDGE
+#include "app_serial_bridge.h"
 #endif
 #include "stm32f1xx_hal.h"
 
@@ -75,6 +81,8 @@ void App_ButtonTest_Init(void)
 #if APP_ENABLE_OLED
 #if APP_ENABLE_TURN_CALIB
     App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
+#elif APP_ENABLE_MAG_CALIB
+    App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
 #elif APP_ENABLE_COVERAGE
     App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
 #else
@@ -179,6 +187,12 @@ static void App_ButtonTest_HandleShortPress(uint8_t index)
         App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
 #endif
         App_TurnCalib_Select();
+#elif APP_ENABLE_MAG_CALIB
+        s_last_event = "K1 MCAL DIR";
+#if APP_ENABLE_OLED
+        App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
+#endif
+        App_MagCalib_ToggleDirection();
 #elif APP_ENABLE_COVERAGE
         s_last_event = "K1 SELECT";
 #if APP_ENABLE_OLED
@@ -205,6 +219,13 @@ static void App_ButtonTest_HandleShortPress(uint8_t index)
         App_TurnCalib_Control();
         s_run_enabled = App_TurnCalib_IsRunning();
         s_last_event = "K2 TCAL OK";
+#elif APP_ENABLE_MAG_CALIB
+#if APP_ENABLE_OLED
+        App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
+#endif
+        App_MagCalib_Toggle();
+        s_run_enabled = App_MagCalib_IsRunning();
+        s_last_event = "K2 MCAL";
 #elif APP_ENABLE_COVERAGE
 #if APP_ENABLE_OLED
         App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
@@ -264,6 +285,9 @@ static void App_ButtonTest_ClearCounts(const char *event_text)
 #if APP_ENABLE_TURN_CALIB
     App_TurnCalib_Stop();
 #endif
+#if APP_ENABLE_MAG_CALIB
+    App_MagCalib_Stop();
+#endif
 #if APP_ENABLE_MOTION_PRIMITIVE
     MotionPrimitive_Abort();
 #endif
@@ -271,12 +295,17 @@ static void App_ButtonTest_ClearCounts(const char *event_text)
     Motion_Stop();
 #endif
 #if APP_ENABLE_MOTOR_SERIAL
-    MotorSerial_Stop();
+    MotorSerial_EmergencyStop();
     MotorSerial_Printf("[STOP] key long emergency\r\n");
+#endif
+#if APP_ENABLE_SERIAL_BRIDGE
+    AppSerialBridge_EmergencyStop();
 #endif
 #if APP_ENABLE_OLED
 #if APP_ENABLE_TURN_CALIB
     App_OLED_SetPage(APP_OLED_PAGE_TURN_CALIB);
+#elif APP_ENABLE_MAG_CALIB
+    App_OLED_SetPage(APP_OLED_PAGE_KEY_TEST);
 #elif APP_ENABLE_COVERAGE
     App_OLED_SetPage(APP_OLED_PAGE_COVERAGE);
 #else
